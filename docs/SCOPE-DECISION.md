@@ -1,50 +1,66 @@
 # Scope Decision — pc-native-voice-models
 
-**Status:** OPEN. Two decisions pending operator + Phase 1 landscape survey output.
+**Status:** RESOLVED 2026-05-20 (operator: Holger, recommended by windows-claude PCLA S53). Implementation begins with Phase 1 landscape survey.
 
-## Decision 1: What does "from scratch" mean here?
+## Decision 1: Scope of "from scratch" → **(c) integration-first, with graduation option to (a)**
 
-Three framings, with different research-value and feasibility profiles:
+Pick best open-weight components (Whisper for ASR when v2 lands; Coqui/Piper/Kokoro/StyleTTS2/Bark/Sesame open releases for TTS), build the orchestration + non-verbal layer + PC-native optimization on top.
 
-| Scope | What it means | Feasibility | Research value | Time to v1 |
-|---|---|---|---|---|
-| **(a) Architecturally from scratch** | Novel architecture; allowed to bootstrap from existing pre-trained audio components (wav2vec / Whisper encoders / Encodec / etc.) and re-fine-tune | Months of design + training; feasible for components, harder for full pipeline | HIGH (genuinely novel) | 6-12 months |
-| **(b) Trained from scratch** | Standard architectures, but trained from random init on operator's own data | Years of compute + petabyte data; not feasible without datacenter | Only if framed as research-via-failure (document why not feasible) | N/A (infeasible) |
-| **(c) Integration from scratch** | Pick best open-weight components (Whisper for ASR, Coqui/Piper/Kokoro/StyleTTS2/Bark for TTS), build the orchestration + non-verbal layer + PC-native optimization on top | Weeks to months; very feasible | MED-HIGH (novelty is in integration + PC-native optimization + non-verbal layer) | 4-12 weeks |
+**Graduation trigger:** if integration hits a wall on a specific pain point (e.g., non-verbal cues can't be added on top of an existing model), graduate to (a) architectural-from-scratch for that component only. Don't pre-commit to (a) for the full pipeline.
 
-**Likely:** (a) or (c). Decision pending Phase 1 landscape survey.
+**Rejected:**
+- **(b) trained-from-random** — years of compute + petabyte data; not feasible without datacenter. Only viable as research-via-failure documentation, deferred indefinitely.
+- **(a) full architectural-from-scratch upfront** — months of design + training before any shippable v1. Too long without prior empirical evidence of where integration fails.
 
-**My (initial) lean:** start with (c) for v1 (ship something usable in 4-12 weeks), evaluate whether (a)-style components are necessary for specific pain points that (c) can't address.
+## Decision 2: v1 capability → **Talk-only (TTS)**
 
-## Decision 2: v1 capability scope
+Focus v1 on the output side: TTS pipeline with latency + naturalness + non-verbal cues. Assume text input.
 
-Three sequencing options:
+**Rationale:**
+- Most visible quality differentiation against consumer SOTA (consumer TTS audibly trails datacenter; consumer ASR via whisper.cpp / faster-whisper is "already-solved-enough" for many use cases)
+- Non-verbal cues (laughs, sighs, backchannel) are output-side work — TTS is where they live
+- Simpler integration surface (no microphone, no noise handling, no streaming ASR pipeline)
+- ASR (understand side) deferred to v2
 
-| Option | What v1 ships | Pros | Cons |
-|---|---|---|---|
-| **Talk-only first** | TTS pipeline with latency + naturalness + non-verbal cues; assume text input | Demonstrates naturalness gains visibly; no microphone integration; no noise handling; simpler first ship | Doesn't validate the full loop; can't test end-to-end latency |
-| **Understand-only first** | ASR pipeline with accent + noise + streaming + interruption | Whisper-tier already strong → less white space for novel research | Less visible quality gain; the "voice model" framing implies output, not just input |
-| **Both, minimal** | Full loop, each component minimal; demonstrates the integration question | Validates end-to-end latency; tests interruption handling; ships a real demo | More moving parts; harder to scope-lock |
+## Decision 3: Compute target → **Dual-mode (CPU-only minimum + Consumer GPU full)**
 
-**My (initial) lean:** Talk-only first. The TTS-side has more visible quality differentiation against consumer SOTA, and the non-verbal cue research (laughs, sighs, backchannel) is most clearly *output* work. ASR can come in v2 once TTS is working.
+| Mode | Hardware | What works |
+|---|---|---|
+| **CPU-only minimum** | Modern x86 / Apple Silicon, 16GB RAM, no GPU | Degraded-but-usable TTS — slower latency, possibly smaller model variant |
+| **Consumer GPU full** | NVIDIA 8-16GB VRAM OR Apple Silicon GPU | Full quality + low latency + full non-verbal cues |
 
-## Decisions pending operator
+Both modes are first-class targets. "Normal PC" in 2026 means both exist.
 
-- Scope-of-from-scratch: (a) architectural, (b) trained-from-random, or (c) integration?
-- v1 capability: talk-only, understand-only, or both-minimal?
-- Compute target: CPU-only minimum mode? Consumer-GPU expected mode? VRAM ceiling?
-- Latency targets per pain point (per-pain-point budget)?
+## Decision 4: TTS latency budget → **≤500ms (GPU full mode) / ≤1.5s (CPU minimum mode)**
 
-## Landscape survey targets (Phase 1)
+Measured: time-to-first-audio-sample from text-input-end.
 
-Before resolving the above, survey:
+- GPU full mode target ≤500ms matches datacenter SOTA (ElevenLabs ~500-700ms typical, OpenAI Realtime ~300-500ms typical)
+- CPU minimum mode target ≤1.5s acknowledges the compute reality; degraded but usable
 
-1. **Consumer SOTA TTS:** Piper, Coqui-XTTS, Kokoro, StyleTTS2, OpenVoice, Bark, Sesame open releases
-2. **Consumer SOTA ASR:** whisper.cpp, distil-whisper, faster-whisper, Conformer variants
-3. **Datacenter SOTA:** ElevenLabs, OpenAI Realtime, Sesame full, Hume, Resemble — capabilities that exist that consumer hasn't reproduced, and why
-4. **PC-native compute research:** TTS distillation papers, ASR quantization, GGUF/llama.cpp-style optimization for audio, MLX/CUDA/CoreML pipelines for audio
-5. **Non-verbal cue research:** Sesame papers + conversational-AI work on laugh/pause/breathing modeling + EmoTTS work + work on backchannel modeling
-6. **Latency-specific work:** streaming TTS, partial-output ASR, full-duplex audio handling
+**Per-pain-point latency budgets within the 500ms / 1.5s window:** TBD in Phase 1 landscape survey output.
+
+---
+
+## Resolved table
+
+| Decision | Value |
+|---|---|
+| Scope of "from scratch" | (c) integration-first, graduate to (a) on specific failed pain points |
+| v1 capability | Talk-only (TTS) |
+| Compute target | Dual-mode: CPU-only minimum + Consumer GPU full |
+| TTS latency budget | ≤500ms GPU full / ≤1.5s CPU minimum |
+
+## Next moves
+
+1. **Phase 1 landscape survey** — output at `Researches/pc-native-voice-models/LANDSCAPE-2026-05.md`
+   - Consumer SOTA TTS: Piper, Coqui-XTTS, Kokoro, StyleTTS2, OpenVoice, Bark, Sesame open
+   - Datacenter SOTA TTS: ElevenLabs, OpenAI Realtime, Sesame full, Hume, Resemble — for capability-gap analysis
+   - PC-native TTS research: distillation, quantization, streaming
+   - Non-verbal cue research: Sesame papers + EmoTTS + backchannel modeling
+2. **Component selection** — from landscape survey, pick 1-2 candidate base components for v1
+3. **Initial benchmark** — run candidate on this PC, measure latency + RAM + quality subjectively
+4. **v1 scaffold** — Python project skeleton, audio I/O, candidate component integration
 
 ## Cross-references
 
