@@ -1,0 +1,12 @@
+# Audio I/O toolkit — base dependencies for any TTS work (v1)
+# Installed + verified 2026-05-20. Python 3.10.11.
+# Install: python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+
+numpy==2.2.6
+soundfile==0.13.1       # read/write WAV/FLAC/OGG
+sounddevice==0.5.5      # audio playback to speakers
+onnxruntime==1.23.2     # ONNX model inference (CPU). For GPU: swap to onnxruntime-gpu
+
+# NOTE: onnxruntime (CPU) ships AzureExecutionProvider + CPUExecutionProvider only.
+# For GPU full-mode (per SCOPE-DECISION dual-mode target), replace onnxruntime with
+# onnxruntime-gpu (adds CUDAExecutionProvider). Deferred until GPU benchmark phase.
