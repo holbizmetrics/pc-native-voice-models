@@ -24,7 +24,31 @@ python speak.py -h                      # full help with examples
 
 Streams sentence-by-sentence — first words start ~1s after enter, gapless after that (generator runs ~2× faster than playback on CPU). No GPU required.
 
-**What works (v1):** clean speech, 54 voices, streaming low-latency playback, save-to-WAV, CPU-only.
+### Languages
+
+Pick a voice — the language **auto-derives from the voice prefix**, no `--lang` needed:
+
+```bash
+python speak.py "Bonjour le monde." --voice ff_siwis      # French, auto
+python speak.py "Hola, qué tal." --voice ef_dora          # Spanish, auto
+python speak.py "こんにちは。" --voice jf_alpha             # Japanese, auto
+```
+
+| Language | Voice prefix | auto `--lang` | works in base v1 |
+|---|---|---|---|
+| US English | `af_` `am_` | en-us | ✓ |
+| British English | `bf_` `bm_` | en-gb | ✓ |
+| Spanish | `ef_` `em_` | es | ✓ |
+| French | `ff_` | fr-fr | ✓ |
+| Hindi | `hf_` `hm_` | hi | ✓ |
+| Italian | `if_` `im_` | it | ✓ |
+| Portuguese (BR) | `pf_` `pm_` | pt-br | ✓ |
+| Japanese | `jf_` `jm_` | ja | ✓ |
+| Mandarin | `zf_` `zm_` | zh | ✗ needs `pip install misaki[zh]` (espeak can't do Mandarin) |
+
+`--lang` is still accepted as an explicit override.
+
+**What works (v1):** clean speech, 54 voices, **8 languages auto-detected from voice**, streaming low-latency playback, save-to-WAV, CPU-only.
 **Not in v1:** non-verbal cues (laughs/sighs). Sesame CSM-1B was tested and ruled out — not human-grade laughs + ~14× realtime on CPU (see research thread `SESAME-SPIKE-RESULT`). Natural non-verbal remains an open research question, deferred to v2.
 
 ## The bet

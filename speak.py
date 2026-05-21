@@ -34,6 +34,28 @@ VOICES = REPO / "models" / "voices-v1.0.bin"
 DEFAULT_VOICE = "af_sarah"
 DEFAULT_LANG = "en-us"
 
+# Voice-prefix -> Kokoro/espeak language code. Lets --lang auto-derive from the
+# chosen voice so you never have to match them by hand (the prefix already
+# encodes the language: af/am=US, bf/bm=GB, ef/em=ES, ff/fm=FR, hf/hm=HI,
+# if/im=IT, pf/pm=PT-BR, jf/jm=JA, zf/zm=ZH).
+VOICE_LANG = {
+    "af": "en-us", "am": "en-us",
+    "bf": "en-gb", "bm": "en-gb",
+    "ef": "es",    "em": "es",
+    "ff": "fr-fr", "fm": "fr-fr",
+    "hf": "hi",    "hm": "hi",
+    "if": "it",    "im": "it",
+    "pf": "pt-br", "pm": "pt-br",
+    "jf": "ja",    "jm": "ja",
+    "zf": "zh",    "zm": "zh",
+}
+
+
+def lang_for(voice: str, explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    return VOICE_LANG.get(voice[:2], DEFAULT_LANG)
+
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -144,7 +166,7 @@ streaming: first words start ~1s in, gapless after (generator runs ahead of play
     p.add_argument("-f", "--file", metavar="PATH", help="read text to speak from a file")
     p.add_argument("--voice", default=DEFAULT_VOICE, help=f"voice name (default {DEFAULT_VOICE}; --list-voices to see all)")
     p.add_argument("--speed", type=float, default=1.0, help="speech speed multiplier (default 1.0)")
-    p.add_argument("--lang", default=DEFAULT_LANG, help=f"language code (default {DEFAULT_LANG})")
+    p.add_argument("--lang", default=None, help="language code (default: auto-derived from voice prefix, e.g. ff_->fr-fr)")
     p.add_argument("--save", metavar="PATH", help="write a WAV instead of playing")
     p.add_argument("--list-voices", action="store_true", help="print available voices and exit")
     args = p.parse_args(argv)
@@ -183,10 +205,11 @@ streaming: first words start ~1s in, gapless after (generator runs ahead of play
     if not text.strip():
         sys.exit("no text given (pass as arg, --file PATH, or pipe via stdin)")
 
+    lang = lang_for(args.voice, args.lang)
     if args.save:
-        speak_to_file(kokoro, text, args.voice, args.speed, args.lang, Path(args.save))
+        speak_to_file(kokoro, text, args.voice, args.speed, lang, Path(args.save))
     else:
-        speak_streaming(kokoro, text, args.voice, args.speed, args.lang)
+        speak_streaming(kokoro, text, args.voice, args.speed, lang)
 
 
 if __name__ == "__main__":
