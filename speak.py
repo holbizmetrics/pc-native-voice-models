@@ -77,9 +77,9 @@ def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str) -> N
         for sent in sentences:
             try:
                 samples, sr = kokoro.create(sent, voice=voice, speed=speed, lang=lang)
-                chunk_q.put((samples.astype(np.float32), sr))
+                chunk_q.put(("chunk", samples.astype(np.float32), sr))
             except Exception as e:
-                chunk_q.put(("ERROR", str(e)))
+                chunk_q.put(("error", str(e)))
                 break
         chunk_q.put(None)
 
@@ -91,9 +91,9 @@ def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str) -> N
             item = chunk_q.get()
             if item is None:
                 break
-            if item[0] == "ERROR":
+            if item[0] == "error":
                 sys.exit(f"generation error: {item[1]}")
-            samples, sr = item
+            _, samples, sr = item
             if stream is None:
                 stream = sd.OutputStream(samplerate=sr, channels=1, dtype="float32")
                 stream.start()
