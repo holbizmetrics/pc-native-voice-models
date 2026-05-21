@@ -2,7 +2,28 @@
 
 > Voice models with full pain-point coverage (latency, naturalness, non-verbal cues like laughs) — running on a normal consumer PC.
 
-**Status:** initial-research / pre-build. Scope decision pending — see [`docs/SCOPE-DECISION.md`](docs/SCOPE-DECISION.md).
+**Status:** **v1 shipped (talk-only TTS).** `speak.py` turns text into streamed speech on CPU via Kokoro. Scope resolved in [`docs/SCOPE-DECISION.md`](docs/SCOPE-DECISION.md); landscape + spike findings in the [research thread](https://github.com/holbizmetrics/Researches/tree/main/pc-native-voice-models).
+
+## v1 — Usage
+
+```bash
+# setup (once)
+python -m venv .venv
+.venv/Scripts/pip install -r requirements.txt kokoro-onnx
+# download Kokoro weights into models/ (kokoro-v1.0.onnx + voices-v1.0.bin)
+
+# speak
+python speak.py "Hello, this is my own voice model, running on the CPU."
+python speak.py "..." --voice af_bella --speed 1.1
+echo "piped text works too" | python speak.py
+python speak.py "save instead of play" --save out.wav
+python speak.py --list-voices          # 54 voices, 8 languages
+```
+
+Streams sentence-by-sentence — first words start ~1s after enter, gapless after that (generator runs ~2× faster than playback on CPU). No GPU required.
+
+**What works (v1):** clean speech, 54 voices, streaming low-latency playback, save-to-WAV, CPU-only.
+**Not in v1:** non-verbal cues (laughs/sighs). Sesame CSM-1B was tested and ruled out — not human-grade laughs + ~14× realtime on CPU (see research thread `SESAME-SPIKE-RESULT`). Natural non-verbal remains an open research question, deferred to v2.
 
 ## The bet
 
