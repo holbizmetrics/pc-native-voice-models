@@ -8,9 +8,11 @@ generator runs ~2x faster than playback, so it stays ahead — gapless).
 Usage:
     python speak.py "Hello, this is my own voice model."
     python speak.py "..." --voice af_bella --speed 1.1
+    python speak.py --file story.txt
     echo "piped text works too" | python speak.py
     python speak.py "save instead of play" --save out.wav
     python speak.py --list-voices
+    python speak.py -h        # full help with examples
 
 Voice library: 54 voices, 8 languages (Kokoro). --list-voices to see them.
 Model files expected at models/kokoro-v1.0.onnx + models/voices-v1.0.bin.
@@ -119,8 +121,27 @@ def speak_to_file(kokoro, text: str, voice: str, speed: float, lang: str, out_pa
 
 
 def main(argv: list[str]) -> None:
-    p = argparse.ArgumentParser(prog="speak.py", description="pc-native-voice-models v1 — talk-only TTS (Kokoro/CPU).")
-    p.add_argument("text", nargs="?", help="text to speak (or pipe via stdin)")
+    p = argparse.ArgumentParser(
+        prog="speak.py",
+        description="pc-native-voice-models v1 — talk-only TTS (Kokoro, CPU, streaming). "
+                    "Type or pipe text, hear it spoken. No GPU, no network at runtime.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+examples:
+  speak.py "Hello, this runs entirely on my CPU."     speak inline text
+  speak.py "..." --voice af_bella --speed 1.1         pick a voice, adjust speed
+  speak.py --file story.txt                            speak a text file
+  echo "piped text" | speak.py                         speak from stdin
+  speak.py "..." --save out.wav                        write a WAV instead of playing
+  speak.py --list-voices                               show all 54 voices
+
+text source precedence: --file > inline arg > stdin.
+voices: 54 across 8 languages (af_=US female, am_=US male, bf_/bm_=British, etc.).
+streaming: first words start ~1s in, gapless after (generator runs ahead of playback).
+""",
+    )
+    p.add_argument("text", nargs="?", help="text to speak (or pipe via stdin, or use --file)")
+    p.add_argument("-f", "--file", metavar="PATH", help="read text to speak from a file")
     p.add_argument("--voice", default=DEFAULT_VOICE, help=f"voice name (default {DEFAULT_VOICE}; --list-voices to see all)")
     p.add_argument("--speed", type=float, default=1.0, help="speech speed multiplier (default 1.0)")
     p.add_argument("--lang", default=DEFAULT_LANG, help=f"language code (default {DEFAULT_LANG})")
@@ -141,12 +162,26 @@ def main(argv: list[str]) -> None:
                   "common ones: af_sarah, af_bella, af_heart, am_adam, am_michael, bf_emma, bm_george")
         return
 
-    # text from arg or stdin
-    text = args.text
-    if text is None or text == "-":
+    # text source precedence: --file > explicit "-" stdin > positional arg > piped stdin.
+    # IMPORTANT: only read stdin when it's actually piped (not a TTY) or explicitly
+    # requested with "-". Otherwise `speak.py` with no args would block forever on
+    # stdin.read() in an interactive terminal (no EOF coming).
+    if args.file:
+        fpath = Path(args.file)
+        if not fpath.is_file():
+            sys.exit(f"file not found: {fpath}")
+        text = fpath.read_text(encoding="utf-8")
+    elif args.text == "-":
         text = sys.stdin.read()
+    elif args.text is not None:
+        text = args.text
+    elif not sys.stdin.isatty():
+        text = sys.stdin.read()
+    else:
+        p.error("no text to speak. Pass text as an argument, use --file PATH, "
+                "or pipe via stdin. Run with -h for examples.")
     if not text.strip():
-        sys.exit("no text given (pass as arg or pipe via stdin)")
+        sys.exit("no text given (pass as arg, --file PATH, or pipe via stdin)")
 
     if args.save:
         speak_to_file(kokoro, text, args.voice, args.speed, args.lang, Path(args.save))

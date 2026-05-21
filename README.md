@@ -15,9 +15,11 @@ python -m venv .venv
 # speak
 python speak.py "Hello, this is my own voice model, running on the CPU."
 python speak.py "..." --voice af_bella --speed 1.1
+python speak.py --file story.txt        # speak a text file
 echo "piped text works too" | python speak.py
 python speak.py "save instead of play" --save out.wav
 python speak.py --list-voices          # 54 voices, 8 languages
+python speak.py -h                      # full help with examples
 ```
 
 Streams sentence-by-sentence — first words start ~1s after enter, gapless after that (generator runs ~2× faster than playback on CPU). No GPU required.
