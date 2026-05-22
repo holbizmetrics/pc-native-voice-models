@@ -53,14 +53,15 @@ Measured: time-to-first-audio-sample from text-input-end.
 
 ## Next moves
 
-1. **Phase 1 landscape survey** — output at `Researches/pc-native-voice-models/LANDSCAPE-2026-05.md`
-   - Consumer SOTA TTS: Piper, Coqui-XTTS, Kokoro, StyleTTS2, OpenVoice, Bark, Sesame open
-   - Datacenter SOTA TTS: ElevenLabs, OpenAI Realtime, Sesame full, Hume, Resemble — for capability-gap analysis
-   - PC-native TTS research: distillation, quantization, streaming
-   - Non-verbal cue research: Sesame papers + EmoTTS + backchannel modeling
-2. **Component selection** — from landscape survey, pick 1-2 candidate base components for v1
-3. **Initial benchmark** — run candidate on this PC, measure latency + RAM + quality subjectively
-4. **v1 scaffold** — Python project skeleton, audio I/O, candidate component integration
+**SUPERSEDED — these all shipped.** Phase 1 survey, component selection (Kokoro), benchmark, and v1 scaffold are all done (`speak.py` shipped 2026-05-21). Current priorities now live in **[`../ROADMAP.md`](../ROADMAP.md)** — the single source of truth for what's next. This section is retained only as the historical pre-build plan.
+
+<details><summary>Original pre-build plan (historical)</summary>
+
+1. Phase 1 landscape survey — DONE (`Researches/pc-native-voice-models/LANDSCAPE-2026-05.md`)
+2. Component selection — DONE (Kokoro 82M)
+3. Initial benchmark — DONE (RTF 0.48 CPU)
+4. v1 scaffold — DONE (`speak.py`)
+</details>
 
 ## Cross-references
 
