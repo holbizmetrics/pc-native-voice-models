@@ -24,6 +24,18 @@ python speak.py -h                      # full help with examples
 
 Streams sentence-by-sentence — first words start ~1s after enter, gapless after that (generator runs ~2× faster than playback on CPU). No GPU required.
 
+**`speak` from anywhere (launcher):** `speak.cmd` lets you run `speak "..."` without typing the venv path. Add the repo dir to your user PATH once:
+
+```powershell
+[Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";D:\FromGitHubEtc\pc-native-voice-models", "User")
+# open a NEW terminal, then:
+speak "Now it works from anywhere."
+speak --file notes.txt
+speak "你好" --voice zf_xiaobei
+```
+
+(`speak.cmd` resolves its own location, so keep it in the repo dir; just put that dir on PATH rather than copying the file.)
+
 ### Languages
 
 Pick a voice — the language **auto-derives from the voice prefix**, no `--lang` needed:
