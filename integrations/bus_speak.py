@@ -1,44 +1,67 @@
 #!/usr/bin/env python3
-"""Bus-speech bridge — speak inbound SecuredChat messages aloud.
+"""Bus-speech bridge — speak inbound SecuredChat messages aloud (in-process).
 
 Reads `chat.py watch --json` (merged with stderr) on stdin. For each inbound
 message: (1) print a text notification to stdout (so an upstream Monitor still
-surfaces it), and (2) speak a short summary via speak.py — "<sender> says: <first
-N words>". Bodies can be long; we speak a summary, not the whole thing.
+surfaces it), and (2) speak a short summary — "<sender> says: <first N words>".
+
+Loads Kokoro ONCE at startup and generates in-process (this is a long-running
+process, so loading once is natural). Earlier this spawned a fresh `speak.py`
+per message, paying the ~2.5s model-load reload every time; in-process drops
+per-message lag from ~3.7s to ~1.2s.
 
 Wire it as:
   SECUREDCHAT_BUS=... python <SecuredChat>/cli/chat.py --room R --identity ME \
     watch --addressed-to-me --exclude-self --since <id> --poll 30 --json 2>&1 \
     | python integrations/bus_speak.py
-
-speak.py cold-starts (~2.5s) per message — fine for low-cadence bus relay. If the
-channel ever gets chatty, swap to a resident speak-server.
 """
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
-SPEAK = ROOT / "speak.py"
+sys.path.insert(0, str(ROOT))  # import speak.py from the repo root
+
+import speak  # noqa: E402  — reuse load_kokoro + generate
+
 VOICE = "af_sarah"
+LANG = "en-us"
 MAX_WORDS = 18
 
+_KOKORO = None
+_SD = None
 
-def speak(text: str) -> None:
+
+def _ensure_loaded():
+    """Load Kokoro + sounddevice once. Returns True if speech is available."""
+    global _KOKORO, _SD
+    if _KOKORO is None:
+        try:
+            _KOKORO = speak.load_kokoro()
+            import sounddevice as sd
+            _SD = sd
+            print("MONITOR_READY: bus_speak loaded Kokoro (in-process speech)", flush=True)
+        except Exception as e:
+            print(f"MONITOR_WARN: speech unavailable ({type(e).__name__}: {e}); text-only", flush=True)
+            _KOKORO = False  # sentinel: tried + failed, don't retry
+    return bool(_KOKORO)
+
+
+def speak_text(text: str) -> None:
+    if not _ensure_loaded():
+        return
     try:
-        subprocess.run(
-            [str(VENV_PY), str(SPEAK), text, "--voice", VOICE],
-            capture_output=True, timeout=180,
-        )
+        samples, sr = speak.generate(_KOKORO, text, VOICE, 1.0, LANG)
+        _SD.play(samples, sr)
+        _SD.wait()
     except Exception:
         pass  # never let a speech failure kill the bridge
 
 
 def main() -> None:
+    _ensure_loaded()  # load up front so the first message isn't delayed by load
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -51,14 +74,12 @@ def main() -> None:
             sender = str(m.get("from", "someone"))
             body = str(m.get("body", "")).replace("\n", " ").replace("\r", " ")
             mid = str(m.get("id", ""))[:8]
-            # text notification (stdout -> upstream Monitor surfaces it)
             print(f"[bus] from={sender} id={mid}: {body[:180]}", flush=True)
-            # spoken summary
             words = body.split()
             summary = " ".join(words[:MAX_WORDS])
             if len(words) > MAX_WORDS:
                 summary += ", and more"
-            speak(f"{sender} says: {summary}")
+            speak_text(f"{sender} says: {summary}")
         elif "securedchat:" in line and ("not found" in line or "ambiguous" in line):
             print(f"[bus-ALERT] cursor issue -> {line[:200]}", flush=True)
 

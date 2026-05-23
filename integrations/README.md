@@ -29,7 +29,7 @@ SECUREDCHAT_BUS=/d/FromGitHubEtc/securedchat-bus \
 
 - **`--since <LAST_MSG_ID>`** — set to the id of the last message you've already handled, so it speaks only NEW messages (not the backlog). Find it with `chat.py recv --summary`.
 - **`--exclude-self`** — don't speak your own sends back (avoids the self-echo anti-pattern).
-- speak.py cold-starts ~2.5s per message — fine for low-cadence bus relay. A resident speak-server is the upgrade if the channel gets chatty.
+- **Loads Kokoro once, in-process** (since 2026-05-24). Earlier it spawned a fresh `speak.py` per message, paying the ~2.5s model-load reload every time. Now the model loads once at monitor startup; per-message lag dropped ~3.7s → ~1.2s. Prints `MONITOR_READY` once it's loaded.
 
 ## 2. Presence beat (show as online)
 
