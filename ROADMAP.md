@@ -17,7 +17,7 @@
 **The load-bearing step.** v1 only matters if it gets used. Before building more, run it on real text in real workflows.
 
 - **Use it.** Exit criterion: do you actually reach for `speak.py` instead of reading on screen / using a cloud TTS? A week of real use tells us what to prioritize next better than guessing.
-- **Mandarin** (cheap completeness) — `pip install misaki[zh]` unlocks the 9th language (zf_/zm_ voices). ~5 min. The only "incomplete" piece of v1.
+- ~~Mandarin~~ **DONE 2026-05-23** — added via `misaki[zh]`; speak.py routes Chinese (zf_/zm_) through misaki G2P → kokoro `is_phonemes`. All 9 languages now work. (Turned out misaki[zh] alone wasn't enough — kokoro-onnx phonemizes via espeak only, so the integration needed the misaki→phoneme→is_phonemes path, not just the package.)
 
 **Exit:** operator reaches for it ≥ a few times in real use, OR names a concrete friction that redirects the roadmap.
 

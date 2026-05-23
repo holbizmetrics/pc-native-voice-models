@@ -56,6 +56,37 @@ def lang_for(voice: str, explicit: str | None) -> str:
         return explicit
     return VOICE_LANG.get(voice[:2], DEFAULT_LANG)
 
+
+# Chinese needs a different phonemizer than the rest. kokoro-onnx phonemizes via
+# espeak only, but Kokoro's Chinese (zf_/zm_) voices were trained on misaki[zh]
+# pinyin phonemes — espeak's Mandarin produces the wrong phoneme set. So for
+# Chinese we run misaki[zh] G2P ourselves and feed phonemes with is_phonemes=True.
+_ZH_G2P = None
+
+
+def _is_chinese(voice: str, lang: str) -> bool:
+    return voice[:2] in ("zf", "zm") or (lang or "").lower() in ("zh", "cmn", "zh-cn")
+
+
+def _zh_phonemes(text: str) -> str:
+    global _ZH_G2P
+    if _ZH_G2P is None:
+        try:
+            from misaki import zh
+        except ImportError:
+            sys.exit("Mandarin needs the Chinese phonemizer: pip install \"misaki[zh]\"")
+        _ZH_G2P = zh.ZHG2P()
+    ph, _ = _ZH_G2P(text)
+    return ph
+
+
+def generate(kokoro, text: str, voice: str, speed: float, lang: str):
+    """One generation call. Routes Chinese through misaki[zh]; everything else
+    through kokoro's normal (espeak) path. Returns (samples, sample_rate)."""
+    if _is_chinese(voice, lang):
+        return kokoro.create(_zh_phonemes(text), voice=voice, speed=speed, is_phonemes=True)
+    return kokoro.create(text, voice=voice, speed=speed, lang=lang)
+
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -100,7 +131,7 @@ def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str) -> N
     def producer():
         for sent in sentences:
             try:
-                samples, sr = kokoro.create(sent, voice=voice, speed=speed, lang=lang)
+                samples, sr = generate(kokoro, sent, voice, speed, lang)
                 chunk_q.put(("chunk", samples.astype(np.float32), sr))
             except Exception as e:
                 chunk_q.put(("error", str(e)))
@@ -134,7 +165,7 @@ def speak_to_file(kokoro, text: str, voice: str, speed: float, lang: str, out_pa
     all_samples = []
     sr = 24000
     for sent in sentences:
-        samples, sr = kokoro.create(sent, voice=voice, speed=speed, lang=lang)
+        samples, sr = generate(kokoro, sent, voice, speed, lang)
         all_samples.append(samples.astype(np.float32))
     full = np.concatenate(all_samples) if all_samples else np.zeros(0, dtype=np.float32)
     sf.write(str(out_path), full, sr)

@@ -6,6 +6,10 @@ numpy==2.2.6
 soundfile==0.13.1       # read/write WAV/FLAC/OGG
 sounddevice==0.5.5      # audio playback to speakers
 onnxruntime==1.23.2     # ONNX model inference (CPU). For GPU: swap to onnxruntime-gpu
+kokoro-onnx==0.5.0      # the TTS model runtime (Kokoro 82M via ONNX)
+misaki[zh]              # Chinese phonemizer (jieba+pinyin) — REQUIRED for Mandarin (zf_/zm_ voices);
+                        # kokoro-onnx phonemizes via espeak for everything else, but Kokoro's Chinese
+                        # voices need misaki pinyin phonemes. speak.py routes Chinese through it.
 
 # NOTE: onnxruntime (CPU) ships AzureExecutionProvider + CPUExecutionProvider only.
 # For GPU full-mode (per SCOPE-DECISION dual-mode target), replace onnxruntime with

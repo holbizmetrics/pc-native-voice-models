@@ -44,11 +44,11 @@ python speak.py "こんにちは。" --voice jf_alpha             # Japanese, au
 | Italian | `if_` `im_` | it | ✓ |
 | Portuguese (BR) | `pf_` `pm_` | pt-br | ✓ |
 | Japanese | `jf_` `jm_` | ja | ✓ |
-| Mandarin | `zf_` `zm_` | zh | ✗ needs `pip install misaki[zh]` (espeak can't do Mandarin) |
+| Mandarin | `zf_` `zm_` | zh | ✓ via `misaki[zh]` (auto-routed; speak.py runs misaki G2P → kokoro `is_phonemes`) |
 
 `--lang` is still accepted as an explicit override.
 
-**What works (v1):** clean speech, 54 voices, **8 languages auto-detected from voice**, streaming low-latency playback, save-to-WAV, CPU-only.
+**What works (v1):** clean speech, 54 voices, **9 languages auto-detected from voice** (incl. Mandarin via misaki[zh]), streaming low-latency playback, save-to-WAV, CPU-only.
 **Not in v1:** non-verbal cues (laughs/sighs). Sesame CSM-1B was tested and ruled out — not human-grade laughs + ~14× realtime on CPU (see research thread `SESAME-SPIKE-RESULT`). Natural non-verbal remains an open research question, deferred to v2.
 
 ## The bet
