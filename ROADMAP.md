@@ -49,7 +49,7 @@ Natural laughs/sighs/backchannel. Sesame CSM-1B ruled out (not human-grade + GPU
 
 ## Polish — anytime, after v1 is in real use
 
-- **First-chunk latency** — break the opening sentence at its first clause so first audio fires <1s (currently ~1.5s). ~15 min. Only worth it if the latency actually bothers you in use.
+- ~~First-chunk latency~~ **DONE 2026-05-23** — `chunk_for_streaming()` peels the opening clause when the first sentence is long + has an early comma/semicolon/colon. Measured: 2.28s → 1.24s TTFA (46% faster, now under the 1.5s target) for comma-having openings; no-op (no regression) for comma-less ones.
 - **GPU full-mode** — swap `onnxruntime` → `onnxruntime-gpu` for the dual-mode target. Only if a use case needs faster-than-CPU throughput.
 
 ---

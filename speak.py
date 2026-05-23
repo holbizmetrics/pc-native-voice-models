@@ -88,11 +88,34 @@ def generate(kokoro, text: str, voice: str, speed: float, lang: str):
     return kokoro.create(text, voice=voice, speed=speed, lang=lang)
 
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+CLAUSE_SPLIT = re.compile(r"(?<=[,;:])\s+")
+# If the opening sentence exceeds this, split it at its first clause boundary so
+# the first audio chunk is small (faster time-to-first-audio). No-op if the
+# opening has no early clause boundary (avoids unnatural mid-clause word-breaks).
+FIRST_CHUNK_MAX_CHARS = 45
+FIRST_CLAUSE_MIN_CHARS = 8
 
 
 def split_sentences(text: str) -> list[str]:
     parts = [s.strip() for s in SENTENCE_SPLIT.split(text.strip()) if s.strip()]
     return parts or ([text.strip()] if text.strip() else [])
+
+
+def chunk_for_streaming(text: str) -> list[str]:
+    """Sentence list, but with a first-chunk-small optimization: if the opening
+    sentence is long AND has an early clause boundary, peel off the opening clause
+    as its own chunk so first audio fires sooner. Subsequent chunks are full
+    sentences. No-op (returns plain sentences) when the opening can't be cleanly
+    split early."""
+    sentences = split_sentences(text)
+    if not sentences:
+        return []
+    first = sentences[0]
+    if len(first) > FIRST_CHUNK_MAX_CHARS:
+        parts = CLAUSE_SPLIT.split(first, maxsplit=1)
+        if len(parts) == 2 and len(parts[0]) >= FIRST_CLAUSE_MIN_CHARS:
+            return [parts[0], parts[1]] + sentences[1:]
+    return sentences
 
 
 def load_kokoro():
@@ -125,7 +148,7 @@ def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str) -> N
     single OutputStream whose blocking write() paces playback."""
     import sounddevice as sd
 
-    sentences = split_sentences(text)
+    sentences = chunk_for_streaming(text)
     chunk_q: "queue.Queue" = queue.Queue()
 
     def producer():
