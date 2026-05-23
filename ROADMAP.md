@@ -7,6 +7,7 @@
 ## Done (shipped, runnable)
 
 - **v1 — `speak.py` (talk-only TTS).** Type/pipe/file text → streamed speech on CPU. Kokoro 82M via ONNX, no GPU, no network at runtime. 54 voices, 8 languages auto-detected from voice prefix, save-to-WAV. Operator-confirmed working live 2026-05-21.
+- **Bus integration — speech output + presence** (`integrations/bus_speak.py` + presence beat). The voice model is a **consumer of the SecuredChat bus**: inbound messages get spoken aloud, and the session advertises itself online via a respawn-wrapped presence beat. Tested live 2026-05-23 (phone-sent message spoken on PC). Setup runbook: [`integrations/README.md`](integrations/README.md). Made the voice model load-bearing in the PCLA ecosystem, not a standalone toy.
 - **Research record:** landscape survey, Kokoro CPU benchmark (RTF 0.48), streaming wrapper (TTFA ~1.5s), Sesame spike (ruled out for non-verbal). In `Researches/pc-native-voice-models/`.
 
 ---
