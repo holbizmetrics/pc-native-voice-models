@@ -35,15 +35,19 @@ The honest gap: v1 is the operator's *tool* over *Kokoro's* voices. Voice-clonin
 
 ---
 
-## After — v2 non-verbal (the open research question)
+## After — v2 non-verbal (locating the one real wall)
 
-Natural laughs/sighs/backchannel. Sesame CSM-1B ruled out (not human-grade + GPU-only). One data point isn't enough to conclude "open-source can't do it on PC."
+Natural laughs/sighs/backchannel — the only capability not yet shown contingent (see README "The bet"). The job here is **wall-location, not wall-breaking:** find out whether human-grade non-verbal is an *absolute* wall on a PC (genuinely needs the compute) or merely an *access* problem (reachable by a non-default route). Sesame CSM-1B is one data point (ruled out: not human-grade + GPU-only); one isn't enough to conclude "open-source can't."
 
-- **Orpheus 3B spike** (ungated, no token) — does it laugh better than Sesame? Settles the research question with a 2nd data point.
-- If still no → **Bark-precache** (pre-generate laugh clips offline, splice into Kokoro). Lower ceiling, reliable.
-- Frame the answer either way: "human-grade open non-verbal on PC is hard-but-possible" vs "not there yet in 2026."
+Keep the two axes separate so any result stays honest:
+- **Absolute** — can a PC-runnable model *generate* human-grade non-verbal de novo? (The Orpheus spike probes this.)
+- **Access** — can human-grade non-verbal appear *in the output* by a non-default technique, even if de-novo generation is walled? (The splice route probes this.)
 
-**Exit:** a clear verdict on whether natural non-verbal is achievable PC-native, with a working path if yes.
+- **Orpheus 3B spike** (ungated, no token) — does it move the *absolute* boundary past Sesame? A 2nd data point on the wall, not a "settle it" claim.
+- **If de-novo stays walled → Bark-precache** (pre-generate laugh clips offline, splice into Kokoro). Reframed: this is the **access route around the wall**, not a "lower-ceiling compromise" — measure how close the spliced output gets, and never conflate "the model generated it" (walled) with "the delivered audio is human-grade, via technique X" (access).
+- Report the verdict on the right axis: *absolute* = "PC-native de-novo non-verbal is / isn't there in 2026"; *access* = "human-grade non-verbal in PC output is / isn't reachable by splicing."
+
+**Exit:** a clear verdict **on each axis** — is the wall absolute, and is the access route good enough — with a working path for whichever lands.
 
 ---
 
@@ -73,3 +77,4 @@ Natural laughs/sighs/backchannel. Sesame CSM-1B ruled out (not human-grade + GPU
 | 2026-05-21 | v1 shipped (`speak.py`) | clean speech path proven end-to-end, operator-confirmed |
 | 2026-05-24 | GPU = CUDA (not DirectML) | DirectML fails on Kokoro's F0 ConvTranspose; CUDA via pip wheels works, ~5.2× warm. cuDNN 9 needs nvidia/*/bin on the DLL path, not just preload_dlls() |
 | 2026-05-24 | GPU opt-in, CPU is CLI default | Measured time-to-first-audio: CPU ~3.2s vs CUDA ~5.6s warm-disk / ~18.8s cold-disk. CUDA cold-start (context + cuDNN autotune) per fresh process loses for one-shots; only amortizes for the load-once resident monitor / long text |
+| 2026-05-25 | Reframe "the bet" as absolute-vs-access per capability | Monolithic "fundamental or contingent?" has no single answer; naturalness + latency are contingent (closed), non-verbal is the lone wall candidate. v2 = wall-*location* (absolute axis = de-novo generation; access axis = splice route), not wall-breaking |

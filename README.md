@@ -99,9 +99,15 @@ python speak.py "こんにちは。" --voice jf_alpha             # Japanese, au
 
 State-of-art voice quality (ElevenLabs, OpenAI Realtime, Sesame, Hume) requires datacenter inference. Consumer-PC voice (Piper, Coqui, Bark, Whisper variants) makes serious quality compromises — latency spikes, robotic prosody, no non-verbal capability.
 
-The research question: is the gap between datacenter-quality voice and PC-runnable voice **fundamental** (it requires the compute) or **contingent** (the field optimized for capabilities first, compute efficiency under fixed budget hasn't been closed)?
+**Don't ask the gap question monolithically.** "Is datacenter-vs-PC voice *fundamental* or *contingent*?" has no single answer — it splits per capability. Decompose, and tag each as either an **absolute wall** (it genuinely needs the compute) or an **access** problem (reachable on a PC, just not by the *default* tooling):
 
-If contingent: this repo builds the closure. If fundamental: this repo documents *why* with empirical receipts, which is still useful to the field.
+| Capability | Verdict | Evidence |
+|---|---|---|
+| **Naturalness** | contingent | Kokoro hits MOS 4.2 at 82M params on CPU — there's no quality wall at this size |
+| **Latency** | contingent, *already routed around* | streaming + first-chunk peel gets felt-latency under target with no faster compute |
+| **Non-verbal** (laughs/sighs) | the one real **wall candidate** | Sesame ruled out (not human-grade + GPU-only); still unproven either way (v2) |
+
+So the repo isn't betting on one yes/no. It **closes the contingent gaps** (done: naturalness + latency) and **locates the absolute wall** precisely (non-verbal, v2). Where a capability turns out genuinely walled, the honest move is the **access route** — reach it by a non-default technique (e.g. pre-generated splices) and *measure the gap* — not pretend the wall isn't there. A capability that "reduces to a known compute limit" is not worthless; conflating *walled* with *worthless* is the category error to avoid.
 
 ## Pain points to address
 
