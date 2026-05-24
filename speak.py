@@ -25,9 +25,12 @@ import queue
 import re
 import sys
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
+
+_T0 = time.time()  # process start, for SPEAK_TIMING time-to-first-audio
 
 REPO = Path(__file__).resolve().parent
 MODEL = REPO / "models" / "kokoro-v1.0.onnx"
@@ -122,23 +125,30 @@ def chunk_for_streaming(text: str) -> list[str]:
 def _select_provider() -> str:
     """Pick the ONNX Runtime execution provider.
 
-    Order: explicit ONNX_PROVIDER env wins > KOKORO_CPU=1 forces CPU >
-    auto-prefer CUDA when onnxruntime-gpu exposes it > CPU. kokoro-onnx reads
-    ONNX_PROVIDER at session construction (kokoro_onnx/__init__.py), so we just
-    set it. DirectML (DmlExecutionProvider) is intentionally NOT auto-selected:
-    it fails on Kokoro's F0 ConvTranspose op (tested 2026-05-24).
+    Order: KOKORO_CPU=1 forces CPU (escape hatch) > explicit ONNX_PROVIDER env >
+    KOKORO_GPU=1 opts into CUDA > CPU (default).
+
+    CPU is the default *even when CUDA is available*. A fresh process pays the
+    full CUDA cold-start every launch (context init + cuDNN first-conv autotune):
+    measured ~5.6s warm-disk / ~18.8s cold-disk to first audio vs ~3.2s on CPU
+    (RTX 3060, 2026-05-24). The ~5x warm-gen win only amortizes where the model
+    loads ONCE and is reused — the resident bus monitor (per-message gen ~2.5s →
+    ~0.5s) or a long streamed text — so those opt in explicitly via KOKORO_GPU=1
+    / ONNX_PROVIDER=CUDAExecutionProvider. DirectML is never selected (fails on
+    Kokoro's F0 ConvTranspose op).
     """
+    if os.getenv("KOKORO_CPU"):
+        return "CPUExecutionProvider"
     env = os.getenv("ONNX_PROVIDER")
     if env:
         return env
-    if os.getenv("KOKORO_CPU"):
-        return "CPUExecutionProvider"
-    try:
-        import onnxruntime as ort
-        if "CUDAExecutionProvider" in ort.get_available_providers():
-            return "CUDAExecutionProvider"
-    except Exception:
-        pass
+    if os.getenv("KOKORO_GPU"):
+        try:
+            import onnxruntime as ort
+            if "CUDAExecutionProvider" in ort.get_available_providers():
+                return "CUDAExecutionProvider"
+        except Exception:
+            pass
     return "CPUExecutionProvider"
 
 
@@ -252,6 +262,9 @@ def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str) -> N
             if stream is None:
                 stream = sd.OutputStream(samplerate=sr, channels=1, dtype="float32")
                 stream.start()
+                if os.getenv("SPEAK_TIMING"):
+                    print(f"[speak] time-to-first-audio: {time.time() - _T0:.2f}s",
+                          file=sys.stderr)
             stream.write(samples)
     finally:
         if stream is not None:

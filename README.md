@@ -36,9 +36,19 @@ speak "你好" --voice zf_xiaobei
 
 (`speak.cmd` resolves its own location, so keep it in the repo dir; just put that dir on PATH rather than copying the file.)
 
-### GPU mode (NVIDIA, optional — ~5× faster)
+### GPU mode (NVIDIA, optional — for the resident monitor / long text)
 
-CPU is the default and needs no setup. On an NVIDIA card you can go ~5× faster per chunk (measured on an RTX 3060: warm-gen **2.56s → 0.50s**). speak.py **auto-selects CUDA** when it's installed — nothing to pass. To enable:
+CPU is the **default**, and it's the right choice for one-shot `speak.py` calls. A fresh GPU process pays the full CUDA cold-start every launch (context init + cuDNN first-conv autotune), so GPU is actually *slower* to first audio for a single short utterance. Measured on an RTX 3060 (time-to-first-audio):
+
+| path | first audio |
+|---|---|
+| CPU | ~3.2s |
+| CUDA, warm disk | ~5.6s |
+| CUDA, cold disk (post-reboot) | ~18.8s |
+
+GPU **wins** only where the model loads once and is reused: the resident bus monitor (per-message gen ~2.5s → ~0.5s) and long streamed text (every chunk after the first is ~5× faster). So GPU is **opt-in**, not the default.
+
+Install the CUDA runtime (no system CUDA, no admin — it's all pip wheels):
 
 ```bash
 .venv/Scripts/pip uninstall onnxruntime -y
@@ -47,7 +57,14 @@ CPU is the default and needs no setup. On an NVIDIA card you can go ~5× faster 
   nvidia-curand-cu12 nvidia-cudnn-cu12 nvidia-cuda-nvrtc-cu12
 ```
 
-No system CUDA install or admin rights needed — the runtime ships in the pip wheels. speak.py adds the wheels' `nvidia/*/bin` dirs to the DLL search path itself (cuDNN 9 lazily loads sub-libraries that `preload_dlls()` alone misses). Force CPU anytime with `KOKORO_CPU=1`. First call still pays ~2s of CUDA/cuDNN warmup; the speedup is on every call after.
+Then enable GPU per-invocation (only worth it for long text):
+
+```bash
+KOKORO_GPU=1 python speak.py "long passage where the 5x warm-gen pays off..."
+# equivalently: ONNX_PROVIDER=CUDAExecutionProvider
+```
+
+speak.py adds the wheels' `nvidia/*/bin` dirs to the DLL search path itself (cuDNN 9 lazily loads sub-libraries that `preload_dlls()` alone misses). `KOKORO_CPU=1` forces CPU even if a GPU env var is set. Time the first audio yourself with `SPEAK_TIMING=1`.
 
 > **DirectML doesn't work** for Kokoro — its F0 `ConvTranspose` op fails on the DmlExecutionProvider. CUDA is the only working GPU path.
 

@@ -23,9 +23,12 @@ SECUREDCHAT_BUS=/d/FromGitHubEtc/securedchat-bus \
   /d/FromGitHubEtc/SecuredChat/cli/chat.py \
   --room prometheus-relay --identity windows-claude \
   watch --addressed-to-me --exclude-self --since <LAST_MSG_ID> --poll 30 --json 2>&1 \
-  | /d/FromGitHubEtc/pc-native-voice-models/.venv/Scripts/python.exe \
+  | ONNX_PROVIDER=CUDAExecutionProvider \
+    /d/FromGitHubEtc/pc-native-voice-models/.venv/Scripts/python.exe \
     /d/FromGitHubEtc/pc-native-voice-models/integrations/bus_speak.py
 ```
+
+- **`ONNX_PROVIDER=CUDAExecutionProvider`** on the `bus_speak.py` side opts the monitor into the GPU. This is the *one* place GPU is worth it: the model loads once at startup (paying the CUDA cold-start ~5.6s a single time), then every spoken message generates in ~0.5s instead of ~2.5s. (One-shot `speak.py` stays on CPU — there the per-launch cold-start loses; see the main README GPU section.) Drop this env to run the monitor on CPU.
 
 - **`--since <LAST_MSG_ID>`** — set to the id of the last message you've already handled, so it speaks only NEW messages (not the backlog). Find it with `chat.py recv --summary`.
 - **`--exclude-self`** — don't speak your own sends back (avoids the self-echo anti-pattern).
