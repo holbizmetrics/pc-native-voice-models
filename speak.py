@@ -20,6 +20,7 @@ Model files expected at models/kokoro-v1.0.onnx + models/voices-v1.0.bin.
 from __future__ import annotations
 
 import argparse
+import os
 import queue
 import re
 import sys
@@ -118,12 +119,88 @@ def chunk_for_streaming(text: str) -> list[str]:
     return sentences
 
 
+def _select_provider() -> str:
+    """Pick the ONNX Runtime execution provider.
+
+    Order: explicit ONNX_PROVIDER env wins > KOKORO_CPU=1 forces CPU >
+    auto-prefer CUDA when onnxruntime-gpu exposes it > CPU. kokoro-onnx reads
+    ONNX_PROVIDER at session construction (kokoro_onnx/__init__.py), so we just
+    set it. DirectML (DmlExecutionProvider) is intentionally NOT auto-selected:
+    it fails on Kokoro's F0 ConvTranspose op (tested 2026-05-24).
+    """
+    env = os.getenv("ONNX_PROVIDER")
+    if env:
+        return env
+    if os.getenv("KOKORO_CPU"):
+        return "CPUExecutionProvider"
+    try:
+        import onnxruntime as ort
+        if "CUDAExecutionProvider" in ort.get_available_providers():
+            return "CUDAExecutionProvider"
+    except Exception:
+        pass
+    return "CPUExecutionProvider"
+
+
+def _register_cuda_dlls() -> None:
+    """Make the CUDA 12 / cuDNN 9 DLLs from the nvidia-*-cu12 pip wheels findable.
+
+    ort.preload_dlls() loads the top-level DLLs but NOT cuDNN 9's lazily-loaded
+    sub-libraries (e.g. cudnn_engines_tensor_ir64_9.dll); without the wheel bin
+    dirs on the DLL search path the first Conv silently falls back to CPU
+    (tested 2026-05-24). So register each nvidia/*/bin dir explicitly, then
+    preload. Windows-only; on Linux the wheels use RPATH/LD_LIBRARY_PATH.
+    """
+    if hasattr(os, "add_dll_directory"):
+        try:
+            import glob
+            import importlib.util
+            spec = importlib.util.find_spec("nvidia")
+            for root in (spec.submodule_search_locations or []) if spec else []:
+                for bindir in glob.glob(os.path.join(root, "*", "bin")):
+                    os.add_dll_directory(bindir)
+        except Exception:
+            pass
+    try:
+        import onnxruntime as ort
+        if hasattr(ort, "preload_dlls"):
+            ort.preload_dlls()
+    except Exception:
+        pass
+
+
 def load_kokoro():
     if not MODEL.is_file() or not VOICES.is_file():
         sys.exit(f"Model files missing:\n  {MODEL}\n  {VOICES}\n"
                  f"(download per README: kokoro-v1.0.onnx + voices-v1.0.bin)")
+
+    provider = _select_provider()
+    if provider == "CUDAExecutionProvider":
+        _register_cuda_dlls()
+    os.environ["ONNX_PROVIDER"] = provider
+    print(f"[speak] ORT provider: {provider}", file=sys.stderr)
+
     from kokoro_onnx import Kokoro
-    return Kokoro(str(MODEL), str(VOICES))
+    try:
+        k = Kokoro(str(MODEL), str(VOICES))
+    except Exception as e:
+        if provider == "CPUExecutionProvider":
+            raise
+        print(f"[speak] {provider} init failed ({type(e).__name__}: {e}); "
+              f"falling back to CPU", file=sys.stderr)
+        os.environ["ONNX_PROVIDER"] = "CPUExecutionProvider"
+        k = Kokoro(str(MODEL), str(VOICES))
+
+    # CUDA can silently fall back to CPU (ORT always appends CPU) if a DLL is
+    # missing — report the provider that actually bound.
+    try:
+        bound = k.sess.get_providers()[0]
+        if bound != os.environ["ONNX_PROVIDER"]:
+            print(f"[speak] NOTE: requested {os.environ['ONNX_PROVIDER']} "
+                  f"but bound {bound}", file=sys.stderr)
+    except Exception:
+        pass
+    return k
 
 
 def list_voices(kokoro) -> list[str]:

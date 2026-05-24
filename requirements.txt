@@ -5,12 +5,23 @@
 numpy==2.2.6
 soundfile==0.13.1       # read/write WAV/FLAC/OGG
 sounddevice==0.5.5      # audio playback to speakers
-onnxruntime==1.23.2     # ONNX model inference (CPU). For GPU: swap to onnxruntime-gpu
+onnxruntime==1.23.2     # ONNX model inference (CPU default). For GPU see the block below.
 kokoro-onnx==0.5.0      # the TTS model runtime (Kokoro 82M via ONNX)
 misaki[zh]              # Chinese phonemizer (jieba+pinyin) — REQUIRED for Mandarin (zf_/zm_ voices);
                         # kokoro-onnx phonemizes via espeak for everything else, but Kokoro's Chinese
                         # voices need misaki pinyin phonemes. speak.py routes Chinese through it.
 
-# NOTE: onnxruntime (CPU) ships AzureExecutionProvider + CPUExecutionProvider only.
-# For GPU full-mode (per SCOPE-DECISION dual-mode target), replace onnxruntime with
-# onnxruntime-gpu (adds CUDAExecutionProvider). Deferred until GPU benchmark phase.
+# ── GPU full-mode (NVIDIA / CUDA) ────────────────────────────────────────────
+# Measured 2026-05-24 on an RTX 3060: warm-gen 2.56s (CPU) -> 0.50s (CUDA), ~5x.
+# speak.py auto-selects CUDA when available (set KOKORO_CPU=1 to force CPU).
+# Replace the onnxruntime line above with onnxruntime-gpu and add the CUDA 12 /
+# cuDNN 9 runtime wheels (no system CUDA install / no admin needed):
+#   pip uninstall onnxruntime
+#   pip install onnxruntime-gpu==1.23.2 \
+#     nvidia-cuda-runtime-cu12 nvidia-cublas-cu12 nvidia-cufft-cu12 \
+#     nvidia-curand-cu12 nvidia-cudnn-cu12 nvidia-cuda-nvrtc-cu12
+# speak.py registers the wheels' nvidia/*/bin dirs on the DLL path (_register_cuda_dlls)
+# because ort.preload_dlls() alone misses cuDNN 9's lazily-loaded sub-libraries.
+#
+# DirectML (onnxruntime-directml) does NOT work: Kokoro's F0 ConvTranspose op
+# fails on the DmlExecutionProvider ("parameter is incorrect"). CUDA only.

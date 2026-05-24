@@ -36,6 +36,21 @@ speak "你好" --voice zf_xiaobei
 
 (`speak.cmd` resolves its own location, so keep it in the repo dir; just put that dir on PATH rather than copying the file.)
 
+### GPU mode (NVIDIA, optional — ~5× faster)
+
+CPU is the default and needs no setup. On an NVIDIA card you can go ~5× faster per chunk (measured on an RTX 3060: warm-gen **2.56s → 0.50s**). speak.py **auto-selects CUDA** when it's installed — nothing to pass. To enable:
+
+```bash
+.venv/Scripts/pip uninstall onnxruntime -y
+.venv/Scripts/pip install onnxruntime-gpu==1.23.2 \
+  nvidia-cuda-runtime-cu12 nvidia-cublas-cu12 nvidia-cufft-cu12 \
+  nvidia-curand-cu12 nvidia-cudnn-cu12 nvidia-cuda-nvrtc-cu12
+```
+
+No system CUDA install or admin rights needed — the runtime ships in the pip wheels. speak.py adds the wheels' `nvidia/*/bin` dirs to the DLL search path itself (cuDNN 9 lazily loads sub-libraries that `preload_dlls()` alone misses). Force CPU anytime with `KOKORO_CPU=1`. First call still pays ~2s of CUDA/cuDNN warmup; the speedup is on every call after.
+
+> **DirectML doesn't work** for Kokoro — its F0 `ConvTranspose` op fails on the DmlExecutionProvider. CUDA is the only working GPU path.
+
 ### Languages
 
 Pick a voice — the language **auto-derives from the voice prefix**, no `--lang` needed:

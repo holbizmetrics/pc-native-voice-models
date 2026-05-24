@@ -50,7 +50,7 @@ Natural laughs/sighs/backchannel. Sesame CSM-1B ruled out (not human-grade + GPU
 ## Polish — anytime, after v1 is in real use
 
 - ~~First-chunk latency~~ **DONE 2026-05-23** — `chunk_for_streaming()` peels the opening clause when the first sentence is long + has an early comma/semicolon/colon. Measured: 2.28s → 1.24s TTFA (46% faster, now under the 1.5s target) for comma-having openings; no-op (no regression) for comma-less ones.
-- **GPU full-mode** — swap `onnxruntime` → `onnxruntime-gpu` for the dual-mode target. Only if a use case needs faster-than-CPU throughput.
+- ~~GPU full-mode~~ **DONE 2026-05-24** — onnxruntime-gpu + CUDA 12 / cuDNN 9 pip wheels (no system CUDA install). speak.py auto-selects CUDA (`_select_provider`), registers the wheels' `nvidia/*/bin` dirs on the DLL path (`_register_cuda_dlls` — `preload_dlls()` alone misses cuDNN 9 sub-libraries → silent CPU fallback), `KOKORO_CPU=1` forces CPU. Measured on an RTX 3060: warm-gen **2.56s → 0.50s (~5.2×)**; cold-gen ~2s either way (CUDA/cuDNN warmup). DirectML ruled out — Kokoro's F0 ConvTranspose fails on DmlExecutionProvider.
 
 ---
 
@@ -71,3 +71,4 @@ Natural laughs/sighs/backchannel. Sesame CSM-1B ruled out (not human-grade + GPU
 | 2026-05-21 | Kokoro = v1 workhorse | RTF 0.48 CPU, MOS 4.2, 54 voices, Apache, no torch |
 | 2026-05-21 | Sesame CSM-1B ruled out for non-verbal | laughs not human-grade (operator ear) + RTF ~14 CPU (GPU-only) |
 | 2026-05-21 | v1 shipped (`speak.py`) | clean speech path proven end-to-end, operator-confirmed |
+| 2026-05-24 | GPU = CUDA (not DirectML) | DirectML fails on Kokoro's F0 ConvTranspose; CUDA via pip wheels works, ~5.2× warm. cuDNN 9 needs nvidia/*/bin on the DLL path, not just preload_dlls() |
