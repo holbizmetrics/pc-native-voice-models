@@ -59,6 +59,7 @@ models/
 audio/
 samples/
 outputs/
+eve-archive/        # EVE_ARCHIVE=1 conversation trail (audio + .txt transcripts)
 
 # Logs + benchmarks
 *.log

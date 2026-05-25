@@ -21,6 +21,9 @@ Config (env):
                                                    set claude-opus-4-7 for max empathy)
   EVE_VOICE    Eve's Kokoro voice                 (default af_heart — warm)
   EVE_MAX_TOKENS  reply cap                       (default 800)
+  EVE_ARCHIVE  set 1 to keep every reply          (off by default)
+                 -> <dir>/eve_<timestamp>.mp3 + .txt transcript, recorded as Eve speaks
+  EVE_ARCHIVE_DIR  where archives are written     (default <repo>/eve-archive)
 
 Usage:
   python integrations/eve_voice.py "I had a rough day."
@@ -43,6 +46,8 @@ EVE_TIERS = [t.strip() for t in os.getenv("EVE_TIERS", "tier1_core").split(",") 
 EVE_MODEL = os.getenv("EVE_MODEL", "claude-sonnet-4-6")
 EVE_VOICE = os.getenv("EVE_VOICE", "af_heart")
 EVE_MAX_TOKENS = int(os.getenv("EVE_MAX_TOKENS", "800"))
+EVE_ARCHIVE = bool(os.getenv("EVE_ARCHIVE"))  # truthy -> save each reply (audio + transcript)
+EVE_ARCHIVE_DIR = Path(os.getenv("EVE_ARCHIVE_DIR", str(ROOT / "eve-archive")))
 
 
 def _api_key() -> str:
@@ -112,7 +117,18 @@ def main() -> None:
 
     kokoro = speak.load_kokoro()
     lang = speak.VOICE_LANG.get(EVE_VOICE[:2], "en-us")
-    speak.speak_streaming(kokoro, _for_speech(reply), EVE_VOICE, 1.0, lang)
+
+    record_path = None
+    if EVE_ARCHIVE:
+        from datetime import datetime
+        EVE_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        record_path = EVE_ARCHIVE_DIR / f"eve_{stamp}.mp3"
+        record_path.with_suffix(".txt").write_text(reply, encoding="utf-8")  # full-fidelity text
+        print(f"[eve] archiving reply (audio + transcript) -> {record_path}", file=sys.stderr)
+
+    speak.speak_streaming(kokoro, _for_speech(reply), EVE_VOICE, 1.0, lang,
+                          record_path=record_path)
 
 
 if __name__ == "__main__":
