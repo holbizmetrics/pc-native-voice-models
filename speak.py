@@ -11,6 +11,7 @@ Usage:
     python speak.py --file story.txt
     echo "piped text works too" | python speak.py
     python speak.py "save instead of play" --save out.wav
+    python speak.py "hear it AND keep it" --record out.mp3
     python speak.py --list-voices
     python speak.py -h        # full help with examples
 
@@ -230,9 +231,16 @@ def list_voices(kokoro) -> list[str]:
     return []
 
 
-def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str) -> None:
+def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str,
+                    record_path: Path | None = None) -> None:
     """Generate sentence-by-sentence in a producer thread, play gaplessly via a
-    single OutputStream whose blocking write() paces playback."""
+    single OutputStream whose blocking write() paces playback.
+
+    If record_path is given, each chunk is written to disk as it plays (streamed
+    to the file, not buffered at the end) — so you hear it AND keep a copy in one
+    pass, and a partial file stays valid if interrupted. Format is inferred from
+    the extension; .wav/.flac/.ogg/.mp3 all work via libsndfile (no ffmpeg/LAME
+    install needed)."""
     import sounddevice as sd
 
     sentences = chunk_for_streaming(text)
@@ -251,6 +259,7 @@ def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str) -> N
     threading.Thread(target=producer, daemon=True).start()
 
     stream = None
+    writer = None
     try:
         while True:
             item = chunk_q.get()
@@ -262,14 +271,29 @@ def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str) -> N
             if stream is None:
                 stream = sd.OutputStream(samplerate=sr, channels=1, dtype="float32")
                 stream.start()
+                # Open the recording file lazily on the first chunk — sr is only
+                # known once generation has produced audio.
+                if record_path is not None:
+                    import soundfile as sf
+                    try:
+                        writer = sf.SoundFile(str(record_path), mode="w",
+                                              samplerate=sr, channels=1)
+                    except Exception as e:
+                        sys.exit(f"cannot record to {record_path}: {e}\n"
+                                 f"(use a .wav / .flac / .ogg / .mp3 extension)")
                 if os.getenv("SPEAK_TIMING"):
                     print(f"[speak] time-to-first-audio: {time.time() - _T0:.2f}s",
                           file=sys.stderr)
             stream.write(samples)
+            if writer is not None:
+                writer.write(samples)
     finally:
         if stream is not None:
             stream.stop()
             stream.close()
+        if writer is not None:
+            writer.close()
+            print(f"[speak] recorded {record_path}", file=sys.stderr)
 
 
 def speak_to_file(kokoro, text: str, voice: str, speed: float, lang: str, out_path: Path) -> None:
@@ -298,10 +322,12 @@ examples:
   speak.py "..." --voice af_bella --speed 1.1         pick a voice, adjust speed
   speak.py --file story.txt                            speak a text file
   echo "piped text" | speak.py                         speak from stdin
-  speak.py "..." --save out.wav                        write a WAV instead of playing
+  speak.py "..." --save out.wav                        write a file instead of playing
+  speak.py "..." --record out.mp3                       play AND save (wav/flac/ogg/mp3)
   speak.py --list-voices                               show all 54 voices
 
 text source precedence: --file > inline arg > stdin.
+output: default plays live; --record plays AND streams to a file; --save writes only (silent).
 voices: 54 across 8 languages (af_=US female, am_=US male, bf_/bm_=British, etc.).
 streaming: first words start ~1s in, gapless after (generator runs ahead of playback).
 """,
@@ -311,7 +337,11 @@ streaming: first words start ~1s in, gapless after (generator runs ahead of play
     p.add_argument("--voice", default=DEFAULT_VOICE, help=f"voice name (default {DEFAULT_VOICE}; --list-voices to see all)")
     p.add_argument("--speed", type=float, default=1.0, help="speech speed multiplier (default 1.0)")
     p.add_argument("--lang", default=None, help="language code (default: auto-derived from voice prefix, e.g. ff_->fr-fr)")
-    p.add_argument("--save", metavar="PATH", help="write a WAV instead of playing")
+    out = p.add_mutually_exclusive_group()
+    out.add_argument("--save", metavar="PATH", help="write to a file instead of playing (no audio out)")
+    out.add_argument("-r", "--record", metavar="PATH",
+                     help="play AND save in one pass — stream the spoken audio to a file "
+                          "(format from extension: .wav/.flac/.ogg/.mp3)")
     p.add_argument("--list-voices", action="store_true", help="print available voices and exit")
     args = p.parse_args(argv)
 
@@ -353,7 +383,8 @@ streaming: first words start ~1s in, gapless after (generator runs ahead of play
     if args.save:
         speak_to_file(kokoro, text, args.voice, args.speed, lang, Path(args.save))
     else:
-        speak_streaming(kokoro, text, args.voice, args.speed, lang)
+        speak_streaming(kokoro, text, args.voice, args.speed, lang,
+                        record_path=Path(args.record) if args.record else None)
 
 
 if __name__ == "__main__":
