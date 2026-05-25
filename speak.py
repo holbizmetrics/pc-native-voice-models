@@ -345,6 +345,33 @@ streaming: first words start ~1s in, gapless after (generator runs ahead of play
     p.add_argument("--list-voices", action="store_true", help="print available voices and exit")
     args = p.parse_args(argv)
 
+    # Resolve + validate the text source BEFORE loading the model (~4s), so a bare
+    # `speak.py` or any missing-text invocation errors instantly instead of after
+    # the load. --list-voices needs the model but no text, so it skips this.
+    #
+    # text source precedence: --file > explicit "-" stdin > positional arg > piped stdin.
+    # IMPORTANT: only read stdin when it's actually piped (not a TTY) or explicitly
+    # requested with "-". Otherwise `speak.py` with no args would block forever on
+    # stdin.read() in an interactive terminal (no EOF coming).
+    text = None
+    if not args.list_voices:
+        if args.file:
+            fpath = Path(args.file)
+            if not fpath.is_file():
+                sys.exit(f"file not found: {fpath}")
+            text = fpath.read_text(encoding="utf-8")
+        elif args.text == "-":
+            text = sys.stdin.read()
+        elif args.text is not None:
+            text = args.text
+        elif not sys.stdin.isatty():
+            text = sys.stdin.read()
+        else:
+            p.error("no text to speak. Pass text as an argument, use --file PATH, "
+                    "or pipe via stdin. Run with -h for examples.")
+        if not text.strip():
+            sys.exit("no text given (pass as arg, --file PATH, or pipe via stdin)")
+
     kokoro = load_kokoro()
 
     if args.list_voices:
@@ -357,27 +384,6 @@ streaming: first words start ~1s in, gapless after (generator runs ahead of play
             print("could not enumerate voices from this kokoro-onnx version; "
                   "common ones: af_sarah, af_bella, af_heart, am_adam, am_michael, bf_emma, bm_george")
         return
-
-    # text source precedence: --file > explicit "-" stdin > positional arg > piped stdin.
-    # IMPORTANT: only read stdin when it's actually piped (not a TTY) or explicitly
-    # requested with "-". Otherwise `speak.py` with no args would block forever on
-    # stdin.read() in an interactive terminal (no EOF coming).
-    if args.file:
-        fpath = Path(args.file)
-        if not fpath.is_file():
-            sys.exit(f"file not found: {fpath}")
-        text = fpath.read_text(encoding="utf-8")
-    elif args.text == "-":
-        text = sys.stdin.read()
-    elif args.text is not None:
-        text = args.text
-    elif not sys.stdin.isatty():
-        text = sys.stdin.read()
-    else:
-        p.error("no text to speak. Pass text as an argument, use --file PATH, "
-                "or pipe via stdin. Run with -h for examples.")
-    if not text.strip():
-        sys.exit("no text given (pass as arg, --file PATH, or pipe via stdin)")
 
     lang = lang_for(args.voice, args.lang)
     if args.save:
