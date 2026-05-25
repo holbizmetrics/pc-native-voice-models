@@ -333,13 +333,13 @@ streaming: first words start ~1s in, gapless after (generator runs ahead of play
 """,
     )
     p.add_argument("text", nargs="?", help="text to speak (or pipe via stdin, or use --file)")
-    p.add_argument("-f", "--file", metavar="PATH", help="read text to speak from a file")
+    p.add_argument("--file", "-f", metavar="PATH", help="read text to speak from a file")
     p.add_argument("--voice", default=DEFAULT_VOICE, help=f"voice name (default {DEFAULT_VOICE}; --list-voices to see all)")
     p.add_argument("--speed", type=float, default=1.0, help="speech speed multiplier (default 1.0)")
     p.add_argument("--lang", default=None, help="language code (default: auto-derived from voice prefix, e.g. ff_->fr-fr)")
     out = p.add_mutually_exclusive_group()
     out.add_argument("--save", metavar="PATH", help="write to a file instead of playing (no audio out)")
-    out.add_argument("-r", "--record", metavar="PATH",
+    out.add_argument("--record", "-r", metavar="PATH",
                      help="play AND save in one pass — stream the spoken audio to a file "
                           "(format from extension: .wav/.flac/.ogg/.mp3)")
     p.add_argument("--list-voices", action="store_true", help="print available voices and exit")
