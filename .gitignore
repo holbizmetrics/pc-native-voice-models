@@ -22,6 +22,7 @@ wheels/
 
 # Virtual environments
 .venv/
+.venv-clone/
 venv/
 env/
 ENV/
@@ -65,4 +66,5 @@ benchmarks/results/
 
 # Local config
 .env
+.eve_key
 local_config.json
