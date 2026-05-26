@@ -66,8 +66,12 @@ def speak_text(text: str) -> None:
         samples, sr = speak.generate(_KOKORO, text, VOICE, 1.0, LANG)
         _SD.play(samples, sr)
         _SD.wait()
-    except Exception:
-        pass  # never let a speech failure kill the bridge
+    except Exception as e:
+        # Surface but don't propagate — the bridge must never die on a speech
+        # glitch, but a silent swallow hid a real diagnostic for an hour during
+        # the 2026-05-26 mango-investigation. stderr keeps it visible without
+        # corrupting the [bus] event stream on stdout.
+        print(f"[bus] speech failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
 
 
 def main() -> None:
