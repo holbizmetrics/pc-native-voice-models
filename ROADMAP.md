@@ -9,6 +9,14 @@
 - **v1 — `speak.py` (talk-only TTS).** Type/pipe/file text → streamed speech on CPU. Kokoro 82M via ONNX, no GPU, no network at runtime. 54 voices, 8 languages auto-detected from voice prefix, save-to-WAV. Operator-confirmed working live 2026-05-21.
 - **Bus integration — speech output + presence** (`integrations/bus_speak.py` + presence beat). The voice model is a **consumer of the SecuredChat bus**: inbound messages get spoken aloud, and the session advertises itself online via a respawn-wrapped presence beat. Tested live 2026-05-23 (phone-sent message spoken on PC). Setup runbook: [`integrations/README.md`](integrations/README.md). Made the voice model load-bearing in the PCLA ecosystem, not a standalone toy.
 - **Research record:** landscape survey, Kokoro CPU benchmark (RTF 0.48), streaming wrapper (TTFA ~1.5s), Sesame spike (ruled out for non-verbal). In `Researches/pc-native-voice-models/`.
+- **v1.1 — recording, archiving, reading mode, and the first real audit (shipped 2026-05-26).** Operator's first deep dogfood run drove a same-day cluster:
+  - `speak.py --record PATH` — play AND save in one pass (wav/flac/ogg/mp3, libsndfile-native — no ffmpeg). Streamed write; partial-file valid on interrupt.
+  - `speak.py --read` — **reading mode**: prints the text word-by-word IN SYNC with the speech (one sentence per line). Composes with `--record`.
+  - `eve_voice.py EVE_ARCHIVE=1` — every Eve reply archived to `eve-archive/eve_<ts>.{mp3,txt}` (audio + full-fidelity transcript).
+  - `bus_speak.py BUS_VOICE`/`BUS_LANG`/`BUS_MAX_WORDS` env config (was hardcoded `af_sarah`/`en-us`/`18`). Lang auto-derives from voice prefix matching `speak.lang_for`.
+  - **TRIAD+KG audit of `speak.py`:** H1 (zh-voice streaming hang when `misaki[zh]` missing — test-confirmed) + M1–M4 (doc honesty, queue backpressure) fixed; L1–L4 deferred as low.
+  - Polish: bare `speak.py` errors instantly (no 4 s model load first); usage shows long-form `--file`/`--record` (was inconsistent).
+  - **Measured this session (RTX 3060 host):** silent-gen RTF ≈ 0.37 CPU (~2.7× faster than real-time); model load ~4.4 s.
 
 ---
 
@@ -20,6 +28,8 @@
 - ~~Mandarin~~ **DONE 2026-05-23** — added via `misaki[zh]`; speak.py routes Chinese (zf_/zm_) through misaki G2P → kokoro `is_phonemes`. All 9 languages now work. (Turned out misaki[zh] alone wasn't enough — kokoro-onnx phonemizes via espeak only, so the integration needed the misaki→phoneme→is_phonemes path, not just the package.)
 
 **Exit:** operator reaches for it ≥ a few times in real use, OR names a concrete friction that redirects the roadmap.
+
+**✓ EXIT FIRED 2026-05-26** — operator used it on a real ~1-hour text → mp3 in one shot ("no problems whatsoever"), AND during the same session named concrete frictions (no recording flag, no progress display, doc/CLI inconsistencies, zh-streaming hang) which crystallized into the **v1.1** cluster above. Bus-to-voice bridge also revived and witnessed externally (`af_nicole`, `BUS_MAX_WORDS=50`). Advancing to **Next: voice-cloning**.
 
 ---
 
@@ -78,3 +88,5 @@ Keep the two axes separate so any result stays honest:
 | 2026-05-24 | GPU = CUDA (not DirectML) | DirectML fails on Kokoro's F0 ConvTranspose; CUDA via pip wheels works, ~5.2× warm. cuDNN 9 needs nvidia/*/bin on the DLL path, not just preload_dlls() |
 | 2026-05-24 | GPU opt-in, CPU is CLI default | Measured time-to-first-audio: CPU ~3.2s vs CUDA ~5.6s warm-disk / ~18.8s cold-disk. CUDA cold-start (context + cuDNN autotune) per fresh process loses for one-shots; only amortizes for the load-once resident monitor / long text |
 | 2026-05-25 | Reframe "the bet" as absolute-vs-access per capability | Monolithic "fundamental or contingent?" has no single answer; naturalness + latency are contingent (closed), non-verbal is the lone wall candidate. v2 = wall-*location* (absolute axis = de-novo generation; access axis = splice route), not wall-breaking |
+| 2026-05-26 | v1.1 cluster — record/archive/reading-mode + TRIAD+KG audit | Operator's first deep dogfood (real ~1hr text → mp3) fired the "Now" exit and named real frictions same-day. H1 zh-streaming hang was found by audit AND test-confirmed — the bridge would have silently hung on missing `misaki[zh]`. M4 unbounded queue would have buffered the full audio in RAM for long inputs (~200-330 MB for an hour) |
+| 2026-05-26 | Bus speech env-configurable (`BUS_VOICE`/`BUS_LANG`/`BUS_MAX_WORDS`) | Same pattern as `eve_voice.py`'s `EVE_VOICE`; LANG auto-derives from voice prefix matching `speak.lang_for`. Default unchanged so existing wiring keeps working. Drove the bus-monitor revival with `af_nicole` and the 18→50 cap fix once a real test exposed mango truncation |
