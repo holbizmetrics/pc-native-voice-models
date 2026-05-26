@@ -14,6 +14,7 @@ Usage:
     echo "piped text works too" | python speak.py
     python speak.py "save instead of play" --save out.wav
     python speak.py "hear it AND keep it" --record out.mp3
+    python speak.py --file story.txt --read       # read-along: words appear as spoken
     python speak.py --list-voices
     python speak.py -h        # full help with examples
 
@@ -233,8 +234,47 @@ def list_voices(kokoro) -> list[str]:
     return []
 
 
+def _play_read_along(stream, writer, samples, sr: int, sent: str) -> None:
+    """Reading mode, one chunk: write `samples` to the stream in small slices and
+    print the words of `sent` to stdout as playback reaches them — each word shows
+    up as it's spoken. Kokoro gives no per-word timestamps, so word timing is
+    proportional to word length, paced off this chunk's own audio duration; that
+    keeps the text roughly in sync with the voice. Records each slice too if a
+    writer is given. Ends the sentence with a newline."""
+    words = sent.split()
+    n = len(samples)
+    dur = n / sr if sr else 0.0
+    # Start time of each word (proportional to its length in characters).
+    starts = []
+    if words:
+        weights = [max(1, len(w)) for w in words]
+        tot = sum(weights)
+        acc = 0
+        for w in weights:
+            starts.append(dur * acc / tot)
+            acc += w
+    frame = max(1, int(sr * 0.04))  # 40 ms slices pace the word reveal
+    played = next_word = 0
+    while played < n:
+        sl = samples[played:played + frame]
+        stream.write(sl)
+        if writer is not None:
+            writer.write(sl)
+        played += len(sl)
+        t = played / sr if sr else dur
+        while next_word < len(words) and t >= starts[next_word]:
+            sys.stdout.write(words[next_word] + " ")
+            sys.stdout.flush()
+            next_word += 1
+    # Flush any words not yet shown (e.g. the final word) and end the line.
+    if next_word < len(words):
+        sys.stdout.write(" ".join(words[next_word:]) + " ")
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
 def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str,
-                    record_path: Path | None = None) -> None:
+                    record_path: Path | None = None, read: bool = False) -> None:
     """Generate sentence-by-sentence in a producer thread, play gaplessly via a
     single OutputStream whose blocking write() paces playback.
 
@@ -242,11 +282,20 @@ def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str,
     to the file, not buffered at the end) — so you hear it AND keep a copy in one
     pass, and a partial file stays valid if interrupted. Format is inferred from
     the extension; .wav/.flac/.ogg/.mp3 all work via libsndfile (no ffmpeg/LAME
-    install needed)."""
+    install needed).
+
+    If read is True (reading mode), the text is printed to the console word by
+    word IN SYNC with the speech — each word appears as it's spoken — one sentence
+    per line. Combine with record_path to read along AND keep the file."""
     import sounddevice as sd
 
     sentences = chunk_for_streaming(text)
-    chunk_q: "queue.Queue" = queue.Queue()
+    # Bounded queue = backpressure. The generator runs ~2-3x faster than playback
+    # (RTF ~0.37), so an UNbounded queue would race ahead and buffer the ENTIRE
+    # audio in RAM for a long input (a ~1hr text ≈ hundreds of MB). maxsize caps how
+    # far ahead generation runs; the producer's put() blocks until the consumer
+    # drains. 8 sentences ahead is far more than enough to stay gapless.
+    chunk_q: "queue.Queue" = queue.Queue(maxsize=8)
 
     def producer():
         # Catch BaseException, not just Exception: _zh_phonemes (missing misaki[zh])
@@ -257,7 +306,7 @@ def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str,
         try:
             for sent in sentences:
                 samples, sr = generate(kokoro, sent, voice, speed, lang)
-                chunk_q.put(("chunk", samples.astype(np.float32), sr))
+                chunk_q.put(("chunk", samples.astype(np.float32), sr, sent))
         except BaseException as e:
             chunk_q.put(("error", str(e) or type(e).__name__))
         finally:
@@ -274,7 +323,7 @@ def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str,
                 break
             if item[0] == "error":
                 sys.exit(f"generation error: {item[1]}")
-            _, samples, sr = item
+            _, samples, sr, sent = item
             if stream is None:
                 stream = sd.OutputStream(samplerate=sr, channels=1, dtype="float32")
                 stream.start()
@@ -291,9 +340,12 @@ def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str,
                 if os.getenv("SPEAK_TIMING"):
                     print(f"[speak] time-to-first-audio: {time.time() - _T0:.2f}s",
                           file=sys.stderr)
-            stream.write(samples)
-            if writer is not None:
-                writer.write(samples)
+            if read:
+                _play_read_along(stream, writer, samples, sr, sent)
+            else:
+                stream.write(samples)
+                if writer is not None:
+                    writer.write(samples)
     finally:
         if stream is not None:
             stream.stop()
@@ -332,10 +384,12 @@ examples:
   echo "piped text" | speak.py                         speak from stdin
   speak.py "..." --save out.wav                        write a file instead of playing
   speak.py "..." --record out.mp3                       play AND save (wav/flac/ogg/mp3)
+  speak.py --file story.txt --read                      read-along: words appear as spoken
   speak.py --list-voices                               show all 54 voices
 
 text source precedence: --file > inline arg > stdin.
 output: default plays live; --record plays AND streams to a file; --save writes only (silent).
+reading mode: add --read to print the text word-by-word in sync with the speech.
 voices: 54 across 9 languages (af_=US female, am_=US male, bf_/bm_=British, etc.).
 streaming: once loaded, first words ~1s in, gapless after (generator runs ahead);
            a cold launch adds the one-time model load (~3-4s) first.
@@ -351,8 +405,15 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
     out.add_argument("--record", "-r", metavar="PATH",
                      help="play AND save in one pass — stream the spoken audio to a file "
                           "(format from extension: .wav/.flac/.ogg/.mp3)")
+    p.add_argument("--read", action="store_true",
+                   help="reading mode: print the text word-by-word in sync with the "
+                        "speech (one sentence per line). Combines with --record.")
     p.add_argument("--list-voices", action="store_true", help="print available voices and exit")
     args = p.parse_args(argv)
+
+    if args.save and args.read:
+        p.error("--read shows the text during playback and can't be combined with --save "
+                "(silent / writes only). Use --record to also keep a file.")
 
     # Resolve + validate the text source BEFORE loading the model (~4s), so a bare
     # `speak.py` or any missing-text invocation errors instantly instead of after
@@ -399,7 +460,8 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
         speak_to_file(kokoro, text, args.voice, args.speed, lang, Path(args.save))
     else:
         speak_streaming(kokoro, text, args.voice, args.speed, lang,
-                        record_path=Path(args.record) if args.record else None)
+                        record_path=Path(args.record) if args.record else None,
+                        read=args.read)
 
 
 if __name__ == "__main__":
