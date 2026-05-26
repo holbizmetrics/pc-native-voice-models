@@ -10,14 +10,20 @@ process, so loading once is natural). Earlier this spawned a fresh `speak.py`
 per message, paying the ~2.5s model-load reload every time; in-process drops
 per-message lag from ~3.7s to ~1.2s.
 
+Config (env, set before launch):
+  BUS_VOICE      Kokoro voice                          (default af_sarah)
+  BUS_LANG       lang code                             (default: auto from voice prefix)
+  BUS_MAX_WORDS  max words spoken per message summary  (default 18)
+
 Wire it as:
   SECUREDCHAT_BUS=... python <SecuredChat>/cli/chat.py --room R --identity ME \
     watch --addressed-to-me --exclude-self --since <id> --poll 30 --json 2>&1 \
-    | python integrations/bus_speak.py
+    | BUS_VOICE=af_nicole python integrations/bus_speak.py
 """
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -26,9 +32,13 @@ sys.path.insert(0, str(ROOT))  # import speak.py from the repo root
 
 import speak  # noqa: E402  — reuse load_kokoro + generate
 
-VOICE = "af_sarah"
-LANG = "en-us"
-MAX_WORDS = 18
+# Config via env (set before launch; defaults match the original constants).
+#   BUS_VOICE      Kokoro voice                          (default af_sarah)
+#   BUS_LANG       lang code                             (default: auto from voice prefix)
+#   BUS_MAX_WORDS  max words spoken per message summary  (default 18)
+VOICE = os.getenv("BUS_VOICE", "af_sarah")
+LANG = os.getenv("BUS_LANG") or speak.VOICE_LANG.get(VOICE[:2], "en-us")
+MAX_WORDS = int(os.getenv("BUS_MAX_WORDS", "18"))
 
 _KOKORO = None
 _SD = None
