@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """speak.py — pc-native-voice-models v1: type text, hear it.
 
-Talk-only TTS over Kokoro (ONNX, CPU). Streams sentence-by-sentence so the
-first words start ~1s after you hit enter, regardless of total length (the
-generator runs ~2x faster than playback, so it stays ahead — gapless).
+Talk-only TTS over Kokoro (ONNX, CPU by default; GPU opt-in via KOKORO_GPU).
+Streams sentence-by-sentence so, once the model is loaded, the first words start
+~1s after you hit enter, regardless of total length (the generator runs ~2x
+faster than playback, so it stays ahead — gapless). A cold CLI launch adds the
+one-time model load (~3-4s) before that first ~1s.
 
 Usage:
     python speak.py "Hello, this is my own voice model."
@@ -15,7 +17,7 @@ Usage:
     python speak.py --list-voices
     python speak.py -h        # full help with examples
 
-Voice library: 54 voices, 8 languages (Kokoro). --list-voices to see them.
+Voice library: 54 voices, 9 languages (Kokoro). --list-voices to see them.
 Model files expected at models/kokoro-v1.0.onnx + models/voices-v1.0.bin.
 """
 from __future__ import annotations
@@ -247,14 +249,19 @@ def speak_streaming(kokoro, text: str, voice: str, speed: float, lang: str,
     chunk_q: "queue.Queue" = queue.Queue()
 
     def producer():
-        for sent in sentences:
-            try:
+        # Catch BaseException, not just Exception: _zh_phonemes (missing misaki[zh])
+        # calls sys.exit() -> SystemExit, which is a BaseException. Uncaught in this
+        # worker thread it would kill the thread WITHOUT queuing the sentinel, leaving
+        # the consumer blocked forever on chunk_q.get(). The finally guarantees the
+        # sentinel is always sent, so a failure surfaces as an error, never a hang.
+        try:
+            for sent in sentences:
                 samples, sr = generate(kokoro, sent, voice, speed, lang)
                 chunk_q.put(("chunk", samples.astype(np.float32), sr))
-            except Exception as e:
-                chunk_q.put(("error", str(e)))
-                break
-        chunk_q.put(None)
+        except BaseException as e:
+            chunk_q.put(("error", str(e) or type(e).__name__))
+        finally:
+            chunk_q.put(None)
 
     threading.Thread(target=producer, daemon=True).start()
 
@@ -313,8 +320,9 @@ def speak_to_file(kokoro, text: str, voice: str, speed: float, lang: str, out_pa
 def main(argv: list[str]) -> None:
     p = argparse.ArgumentParser(
         prog="speak.py",
-        description="pc-native-voice-models v1 — talk-only TTS (Kokoro, CPU, streaming). "
-                    "Type or pipe text, hear it spoken. No GPU, no network at runtime.",
+        description="pc-native-voice-models v1 — talk-only TTS (Kokoro, streaming; CPU by "
+                    "default, GPU opt-in via KOKORO_GPU). Type or pipe text, hear it spoken. "
+                    "No network at runtime.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 examples:
@@ -328,8 +336,9 @@ examples:
 
 text source precedence: --file > inline arg > stdin.
 output: default plays live; --record plays AND streams to a file; --save writes only (silent).
-voices: 54 across 8 languages (af_=US female, am_=US male, bf_/bm_=British, etc.).
-streaming: first words start ~1s in, gapless after (generator runs ahead of playback).
+voices: 54 across 9 languages (af_=US female, am_=US male, bf_/bm_=British, etc.).
+streaming: once loaded, first words ~1s in, gapless after (generator runs ahead);
+           a cold launch adds the one-time model load (~3-4s) first.
 """,
     )
     p.add_argument("text", nargs="?", help="text to speak (or pipe via stdin, or use --file)")
