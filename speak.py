@@ -126,6 +126,62 @@ def chunk_for_streaming(text: str) -> list[str]:
     return sentences
 
 
+# Markdown -> speech-friendly plain text. speak.py has no markdown dependency, so
+# this is a deliberately small regex pass: it strips the *markup* (so the voice
+# doesn't read "asterisk asterisk", "hash", or a URL aloud) while keeping the
+# words. NOT a full parser — it targets the constructs an assistant reply actually
+# emits (emphasis, headers, lists, links, inline/fenced code, blockquotes, tables,
+# raw HTML). Enabled by --strip-markdown / --md; the point is piping a reply
+# (e.g. Eve / FVPA, which renders Markdown) straight into the voice.
+_MD_FENCE = re.compile(r"```.*?```", re.DOTALL)
+_MD_HTML_TAG = re.compile(r"<[^>]+>")
+_MD_IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_MD_INLINE_CODE = re.compile(r"`([^`]*)`")
+_MD_TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?\s*$", re.MULTILINE)
+_MD_HR = re.compile(r"^\s{0,3}([-*_])(?:\s*\1){2,}\s*$", re.MULTILINE)
+_MD_HEADER = re.compile(r"^\s{0,3}#{1,6}\s*", re.MULTILINE)
+_MD_BLOCKQUOTE = re.compile(r"^\s{0,3}>\s?", re.MULTILINE)
+_MD_LIST = re.compile(r"^\s{0,3}(?:[-*+]|\d+\.)\s+", re.MULTILINE)
+_MD_EMPHASIS = re.compile(r"(\*\*\*|\*\*|\*|___|__|~~)(.*?)\1", re.DOTALL)
+# A whole line that is nothing but one italic/emphasis span — in an emotive
+# assistant idiom (e.g. Eve/FVPA) these are *stage directions*: "*settling in*",
+# "*tears, if I had them*", "*goes very still*". Read aloud they become literal
+# narration, so --spoken drops them. Inline mid-sentence emphasis (*word*) is on
+# its own line only rarely, so this targets actions without eating real prose.
+_MD_STAGE_LINE = re.compile(r"^[*_]{1,3}[^*_].*[*_]{1,3}$")
+
+
+def strip_markdown(text: str, drop_actions: bool = False) -> str:
+    """Best-effort Markdown -> plain prose for TTS. Removes formatting markers and
+    URLs, keeps the readable words. Paragraph breaks are preserved (they pace the
+    voice); excess blank lines are collapsed.
+
+    drop_actions=True additionally removes standalone *stage-direction* lines — the
+    emotive italic asides an assistant like Eve emits — which otherwise get spoken
+    verbatim. Inline emphasis within a sentence is kept."""
+    t = text
+    t = _MD_FENCE.sub(" ", t)          # drop fenced code blocks entirely
+    t = _MD_HTML_TAG.sub(" ", t)       # drop raw HTML tags (SVG/audio/etc.)
+    if drop_actions:                   # drop whole-line *stage directions*
+        t = "\n".join(ln for ln in t.split("\n") if not _MD_STAGE_LINE.match(ln.strip()))
+    t = _MD_IMAGE.sub(r"\1", t)        # image -> its alt text
+    t = _MD_LINK.sub(r"\1", t)         # [text](url) -> text
+    t = _MD_INLINE_CODE.sub(r"\1", t)  # `code` -> code
+    t = _MD_TABLE_SEP.sub("", t)       # drop table separator rows |---|---|
+    t = _MD_HR.sub("", t)              # drop horizontal rules
+    t = _MD_HEADER.sub("", t)          # strip leading #'s
+    t = _MD_BLOCKQUOTE.sub("", t)      # strip leading >
+    t = _MD_LIST.sub("", t)            # strip list bullets / numbers
+    for _ in range(3):                 # emphasis, repeated for nested/adjacent runs
+        t = _MD_EMPHASIS.sub(r"\2", t)
+    t = t.replace("|", " ")            # remaining table pipes -> spaces
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r" *\n *", "\n", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+
 def _select_provider() -> str:
     """Pick the ONNX Runtime execution provider.
 
@@ -385,6 +441,8 @@ examples:
   speak.py "..." --save out.wav                        write a file instead of playing
   speak.py "..." --record out.mp3                       play AND save (wav/flac/ogg/mp3)
   speak.py --file story.txt --read                      read-along: words appear as spoken
+  speak.py "# Hi\n**hey** there" --strip-markdown        speak prose, not the Markdown markup
+  cat eve_reply.md | speak.py --md                       pipe an assistant reply, hear it clean
   speak.py --list-voices                               show all 54 voices
 
 text source precedence: --file > inline arg > stdin.
@@ -408,6 +466,14 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
     p.add_argument("--read", action="store_true",
                    help="reading mode: print the text word-by-word in sync with the "
                         "speech (one sentence per line). Combines with --record.")
+    p.add_argument("--strip-markdown", "--md", dest="strip_markdown", action="store_true",
+                   help="strip Markdown before speaking (headers, *emphasis*, lists, "
+                        "[links](url), `code`, tables, HTML) — speak the prose, not the "
+                        "markup. Handy when piping an assistant reply (e.g. Eve/FVPA).")
+    p.add_argument("--spoken", action="store_true",
+                   help="speak an emotive assistant/Eve reply cleanly: implies --md AND "
+                        "drops standalone *stage-direction* lines (e.g. \"*settling in*\") "
+                        "that would otherwise be read aloud verbatim.")
     p.add_argument("--list-voices", action="store_true", help="print available voices and exit")
     args = p.parse_args(argv)
 
@@ -441,6 +507,12 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
                     "or pipe via stdin. Run with -h for examples.")
         if not text.strip():
             sys.exit("no text given (pass as arg, --file PATH, or pipe via stdin)")
+        if args.spoken:
+            text = strip_markdown(text, drop_actions=True)
+        elif args.strip_markdown:
+            text = strip_markdown(text)
+        if (args.spoken or args.strip_markdown) and not text.strip():
+            sys.exit("nothing left to speak after stripping Markdown")
 
     kokoro = load_kokoro()
 

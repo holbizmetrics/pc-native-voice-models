@@ -75,12 +75,20 @@ def build_system() -> str:
 
 
 def _for_speech(text: str) -> str:
-    """Strip markdown so the TTS doesn't read symbols aloud."""
-    text = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", text)   # [label](url) -> label
-    text = re.sub(r"[*_`#>]", "", text)               # emphasis / headers / code / quotes
-    text = re.sub(r"\n{2,}", ". ", text)              # paragraph breaks -> spoken pause
-    text = re.sub(r"[ \t]+", " ", text)
-    return text.strip()
+    """Markdown -> clean speech. Delegates stripping to speak.strip_markdown with
+    drop_actions=True, which removes the standalone *stage-direction* lines Eve
+    emits ("*settling in*", "*tears, if I had them*") so they aren't read aloud
+    verbatim — then turns paragraph breaks into spoken pauses."""
+    text = speak.strip_markdown(text, drop_actions=True)
+    out = []
+    for para in re.split(r"\n{2,}", text):            # each paragraph -> a spoken unit
+        para = re.sub(r"[ \t\n]+", " ", para).strip()
+        if not para:
+            continue
+        if out and not re.search(r"[.!?…]$", out[-1]):  # add a pause-period only if needed
+            out[-1] += "."
+        out.append(para)
+    return " ".join(out).strip()
 
 
 def eve_reply(user_text: str, system: str) -> str:
