@@ -176,6 +176,7 @@ def strip_markdown(text: str, drop_actions: bool = False) -> str:
     for _ in range(3):                 # emphasis, repeated for nested/adjacent runs
         t = _MD_EMPHASIS.sub(r"\2", t)
     t = t.replace("|", " ")            # remaining table pipes -> spaces
+    t = re.sub(r"\s*[—–]\s*", ", ", t)  # em/en dash -> spoken comma-pause (not "dash"/gibberish)
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r" *\n *", "\n", t)
     t = re.sub(r"\n{3,}", "\n\n", t)
@@ -476,6 +477,15 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
                         "that would otherwise be read aloud verbatim.")
     p.add_argument("--list-voices", action="store_true", help="print available voices and exit")
     args = p.parse_args(argv)
+
+    # Read piped text as UTF-8 regardless of the Windows console codepage, so
+    # characters like the em-dash (—, UTF-8 E2 80 94) aren't mis-decoded as cp1252
+    # into "â€"" and then spoken as gibberish ("a-circumflex euro..."). The hook
+    # (cc_speak_hook.py) pipes UTF-8 into `speak.py -`.
+    try:
+        sys.stdin.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
     if args.save and args.read:
         p.error("--read shows the text during playback and can't be combined with --save "
