@@ -95,6 +95,21 @@ python speak.py "こんにちは。" --voice jf_alpha             # Japanese, au
 **What works (v1):** clean speech, 54 voices, **9 languages auto-detected from voice** (incl. Mandarin via misaki[zh]), streaming low-latency playback, save-to-WAV, CPU-only.
 **Not in v1:** non-verbal cues (laughs/sighs). Sesame CSM-1B was tested and ruled out — not human-grade laughs + ~14× realtime on CPU (see research thread `SESAME-SPIKE-RESULT`). Natural non-verbal remains an open research question, deferred to v2.
 
+## book2audio.py — document → chaptered audiobook
+
+Turn a long `.html` / `.txt` / `.md` into a folder of ordered, size-capped mp3s. Loads Kokoro **once** and defaults to **GPU** (this is a load-once batch — the one case where CUDA's cold-start is amortized away). Built on `speak.py`'s text helpers (HTML/Markdown stripping, encoding-robust read).
+
+```bash
+python book2audio.py book.html                          # numbered ~16-min mp3s (reliable)
+python book2audio.py book.html --by-heading --voice af_nicole
+python book2audio.py book.html --by-heading --dry-run   # preview the split first
+python book2audio.py notes.md --out audio --max-min 10 --cpu
+```
+
+- **Reliable:** numbered size-chunks split at paragraph/sentence boundaries — works on any document.
+- **Best-effort:** `--by-heading` names pieces after detected headings (Chapter/Prologue/Part/`#`/… ; `--heading-regex` to override) and skips a front table-of-contents when it detects one. Heading conventions vary between books, so it **always falls back to size-chunks** and you should eyeball `--dry-run` before trusting chapter-accurate naming.
+- **Resumable:** pieces already on disk are skipped, so an interrupted run continues where it stopped. Each piece streams to disk (bounded memory).
+
 ## The bet
 
 State-of-art voice quality (ElevenLabs, OpenAI Realtime, Sesame, Hume) requires datacenter inference. Consumer-PC voice (Piper, Coqui, Bark, Whisper variants) makes serious quality compromises — latency spikes, robotic prosody, no non-verbal capability.
