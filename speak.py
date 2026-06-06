@@ -24,6 +24,7 @@ Model files expected at models/kokoro-v1.0.onnx + models/voices-v1.0.bin.
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import queue
 import re
@@ -177,6 +178,77 @@ def strip_markdown(text: str, drop_actions: bool = False) -> str:
         t = _MD_EMPHASIS.sub(r"\2", t)
     t = t.replace("|", " ")            # remaining table pipes -> spaces
     t = re.sub(r"\s*[—–]\s*", ", ", t)  # em/en dash -> spoken comma-pause (not "dash"/gibberish)
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r" *\n *", "\n", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+
+# Text-file read with encoding robustness. --file used to hardcode utf-8, which
+# crashes (UnicodeDecodeError) on Windows cp1252 / utf-16 and mojibakes a UTF-8
+# *with BOM* file (stray ﻿). Default utf-8-sig reads plain UTF-8 AND strips a
+# UTF-8 BOM transparently (strict improvement over utf-8). On a decode error we
+# walk a small fallback chain, each step loudly named on stderr; latin-1 never
+# raises (every byte is a valid code point), so a single bad byte degrades to
+# "maybe one wrong char" instead of a crash. No charset auto-detection library
+# (chardet/charset-normalizer) on purpose — it's a dep and it *guesses*; a smart
+# default + explicit --encoding override is dep-free and more predictable. utf-16
+# isn't in the auto-chain (it can't be sniffed safely) — pass --encoding utf-16
+# (Python auto-detects LE/BE from the BOM).
+_ENC_FALLBACKS = ("utf-8-sig", "cp1252", "latin-1")
+
+
+def read_text_file(path: Path, encoding: str = "utf-8-sig") -> str:
+    try:
+        return path.read_text(encoding=encoding)
+    except UnicodeDecodeError:
+        pass
+    for fb in _ENC_FALLBACKS:
+        if fb == encoding:
+            continue
+        try:
+            text = path.read_text(encoding=fb)
+        except UnicodeDecodeError:
+            continue
+        print(f"[speak] {encoding} decode failed for {path.name}; "
+              f"decoded as {fb}" + (" (lossy)" if fb == "latin-1" else ""),
+              file=sys.stderr)
+        return text
+    # latin-1 above never raises, so this is unreachable in practice; kept as a
+    # belt-and-suspenders terminal fallback.
+    print(f"[speak] all decoders failed for {path.name}; forcing latin-1 (lossy)",
+          file=sys.stderr)
+    return path.read_text(encoding="latin-1")
+
+
+# HTML -> speech-friendly plain text. Same dependency-light ethos as
+# strip_markdown (stdlib re + html.unescape, NOT a parser like BeautifulSoup):
+# targets what a saved web page / .html story file actually contains. Beyond what
+# strip_markdown's tag-bracket removal does, this also (a) drops <script>/<style>/
+# <head> CONTENTS (otherwise CSS and JS get read aloud), (b) turns block-level
+# boundaries into paragraph breaks so the voice paces, and (c) unescapes entities
+# (&amp; &mdash; &#8212; -> & — ...). Em/en dashes then route through the same
+# spoken-comma normalization as strip_markdown.
+_HTML_DROP_BLOCK = re.compile(r"<(script|style|head)\b[^>]*>.*?</\1>",
+                              re.DOTALL | re.IGNORECASE)
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_HTML_BREAK = re.compile(
+    r"</?\s*(?:p|div|br|li|tr|h[1-6]|section|article|header|footer|"
+    r"blockquote|ul|ol|table|pre)\b[^>]*>", re.IGNORECASE)
+_HTML_TAG = re.compile(r"<[^>]+>")
+
+
+def strip_html(text: str) -> str:
+    """Best-effort HTML -> plain prose for TTS. Removes script/style/head blocks
+    and all tags, inserts paragraph breaks at block boundaries, unescapes HTML
+    entities, and keeps the readable words."""
+    t = text
+    t = _HTML_COMMENT.sub(" ", t)
+    t = _HTML_DROP_BLOCK.sub(" ", t)   # drop <script>/<style>/<head> + contents
+    t = _HTML_BREAK.sub("\n", t)       # block boundaries -> paragraph breaks
+    t = _HTML_TAG.sub(" ", t)          # remaining inline tags -> space
+    t = html.unescape(t)               # &amp; &mdash; &#8212; -> & — ...
+    t = re.sub(r"\s*[—–]\s*", ", ", t)  # em/en dash -> spoken comma-pause
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r" *\n *", "\n", t)
     t = re.sub(r"\n{3,}", "\n\n", t)
@@ -444,9 +516,13 @@ examples:
   speak.py --file story.txt --read                      read-along: words appear as spoken
   speak.py "# Hi\n**hey** there" --strip-markdown        speak prose, not the Markdown markup
   cat eve_reply.md | speak.py --md                       pipe an assistant reply, hear it clean
+  speak.py --voice af_nicole --file page.html --record page.mp3   speak a saved web page (HTML auto-stripped)
+  speak.py --file legacy.txt --encoding cp1252           read a non-UTF-8 file (or utf-16, latin-1)
   speak.py --list-voices                               show all 54 voices
 
 text source precedence: --file > inline arg > stdin.
+--file encoding: utf-8-sig default (UTF-8 + strips BOM); --encoding for cp1252/utf-16/latin-1.
+.html/.htm files auto-strip HTML; --html strips piped HTML; --md / --spoken strip Markdown.
 output: default plays live; --record plays AND streams to a file; --save writes only (silent).
 reading mode: add --read to print the text word-by-word in sync with the speech.
 voices: 54 across 9 languages (af_=US female, am_=US male, bf_/bm_=British, etc.).
@@ -475,6 +551,14 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
                    help="speak an emotive assistant/Eve reply cleanly: implies --md AND "
                         "drops standalone *stage-direction* lines (e.g. \"*settling in*\") "
                         "that would otherwise be read aloud verbatim.")
+    p.add_argument("--html", action="store_true",
+                   help="strip HTML before speaking (drops <script>/<style>/<head>, "
+                        "all tags, unescapes &entities;) — speak the page text, not the "
+                        "markup. Auto-enabled when --file ends in .html/.htm.")
+    p.add_argument("--encoding", default="utf-8-sig",
+                   help="text-file encoding for --file (default utf-8-sig: plain UTF-8 + "
+                        "strips a BOM). Override for cp1252 / utf-16 / latin-1; on a decode "
+                        "error, auto-falls-back utf-8-sig->cp1252->latin-1 with a warning.")
     p.add_argument("--list-voices", action="store_true", help="print available voices and exit")
     args = p.parse_args(argv)
 
@@ -500,12 +584,14 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
     # requested with "-". Otherwise `speak.py` with no args would block forever on
     # stdin.read() in an interactive terminal (no EOF coming).
     text = None
+    from_html_file = False
     if not args.list_voices:
         if args.file:
             fpath = Path(args.file)
             if not fpath.is_file():
                 sys.exit(f"file not found: {fpath}")
-            text = fpath.read_text(encoding="utf-8")
+            text = read_text_file(fpath, args.encoding)
+            from_html_file = fpath.suffix.lower() in (".html", ".htm")
         elif args.text == "-":
             text = sys.stdin.read()
         elif args.text is not None:
@@ -517,12 +603,22 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
                     "or pipe via stdin. Run with -h for examples.")
         if not text.strip():
             sys.exit("no text given (pass as arg, --file PATH, or pipe via stdin)")
-        if args.spoken:
+        # Strip-mode precedence: HTML (explicit --html OR a .html/.htm --file) >
+        # --spoken (markdown + stage directions) > --md (markdown). HTML and
+        # Markdown stripping are different passes, so only one runs.
+        use_html = args.html or from_html_file
+        if use_html:
+            if from_html_file and not args.html:
+                print(f"[speak] {fpath.name}: HTML detected, stripping markup "
+                      f"(use --md instead to treat as Markdown)", file=sys.stderr)
+            text = strip_html(text)
+        elif args.spoken:
             text = strip_markdown(text, drop_actions=True)
         elif args.strip_markdown:
             text = strip_markdown(text)
-        if (args.spoken or args.strip_markdown) and not text.strip():
-            sys.exit("nothing left to speak after stripping Markdown")
+        if (use_html or args.spoken or args.strip_markdown) and not text.strip():
+            sys.exit("nothing left to speak after stripping "
+                     + ("HTML" if use_html else "Markdown"))
 
     kokoro = load_kokoro()
 
