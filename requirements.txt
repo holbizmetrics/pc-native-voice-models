@@ -25,3 +25,13 @@ misaki[zh]              # Chinese phonemizer (jieba+pinyin) — REQUIRED for Man
 #
 # DirectML (onnxruntime-directml) does NOT work: Kokoro's F0 ConvTranspose op
 # fails on the DmlExecutionProvider ("parameter is incorrect"). CUDA only.
+
+# ── dictation (dictate.py — speech-to-text, the inverse of speak.py) ──────────
+# Verified installed 2026-06-08. faster-whisper declares onnxruntime as a dep;
+# onnxruntime-gpu (above) already provides that module, so install faster-whisper
+# WITHOUT pulling/clobbering it:
+#   pip install ctranslate2 av pynput tokenizers
+#   pip install faster-whisper --no-deps
+faster-whisper==1.2.1   # local Whisper ASR (CTranslate2 backend, CPU int8 / CUDA)
+pynput==1.8.2           # global push-to-talk hotkey + text injection
+# (ctranslate2, av, tokenizers come as faster-whisper deps; onnxruntime via onnxruntime-gpu)
