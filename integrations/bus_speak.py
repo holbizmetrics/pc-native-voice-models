@@ -40,8 +40,26 @@ VOICE = os.getenv("BUS_VOICE", "af_sarah")
 LANG = os.getenv("BUS_LANG") or speak.VOICE_LANG.get(VOICE[:2], "en-us")
 MAX_WORDS = int(os.getenv("BUS_MAX_WORDS", "18"))
 
+import re  # noqa: E402
+
 _KOKORO = None
 _SD = None
+
+# Bus bodies are hash-heavy (commit ids, sha256, uuids). A 64-char hex token is
+# one "word" but explodes into >510 phonemes and crashes Kokoro (IndexError at
+# the 510 phoneme cap). Collapse unspeakable tokens to short placeholders and
+# cap the spoken length well under the phoneme limit. (2026-06-13 fix.)
+_SPEAK_CHAR_CAP = 200
+
+
+def _speakable(text: str) -> str:
+    text = re.sub(r"sha256=?\s*[0-9a-fA-F]{6,}", "a checksum", text)
+    text = re.sub(r"\b[0-9a-fA-F]{8,}\b", "a hash", text)         # commit/uuid hex
+    text = re.sub(r"\b\S{20,}\b", "a long token", text)            # any other long blob
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > _SPEAK_CHAR_CAP:
+        text = text[:_SPEAK_CHAR_CAP].rsplit(" ", 1)[0] + ", and more"
+    return text
 
 
 def _ensure_loaded():
@@ -93,7 +111,7 @@ def main() -> None:
             summary = " ".join(words[:MAX_WORDS])
             if len(words) > MAX_WORDS:
                 summary += ", and more"
-            speak_text(f"{sender} says: {summary}")
+            speak_text(f"{sender} says: {_speakable(summary)}")
         elif "securedchat:" in line and ("not found" in line or "ambiguous" in line):
             print(f"[bus-ALERT] cursor issue -> {line[:200]}", flush=True)
 
