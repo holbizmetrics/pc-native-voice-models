@@ -33,15 +33,16 @@
 
 ---
 
-## Next — Make it *yours* (voice-cloning)
+## Next — Make it *yours* (voice-cloning) — IN PROGRESS
 
-The honest gap: v1 is the operator's *tool* over *Kokoro's* voices. Voice-cloning makes the **voice** yours.
+The honest gap: v1 is the operator's *tool* over *Kokoro's* voices. Voice-cloning makes the **voice** yours. (Kokoro can't clone — its 54 voices are fixed — so this is a separate engine, not a Kokoro voice.)
 
-- **Clone your own voice** from a few seconds of audio (OpenVoice V2 or XTTS v2). The model stays pre-trained; the *voice* becomes custom.
-- This is the direct answer to "is this really mine?" — the voice is, even if the model isn't.
-- **Ethics gate before shipping:** consent + watermarking strategy if cloning anyone but yourself.
+- **Engine chosen: OpenVoice V2** (not XTTS v2). MIT-licensed, so a clone path stays usable even if this project ever ships commercially; XTTS v2's CPML license forbids commercial use. Lighter for the CPU constraint too. Decided up front because switching engines later would mean re-cloning every registered voice.
+- **Ethics gate + scaffold landed 2026-06-23** (office box, no model run): `clone.py` holds the consent gate, the voice registry (`voices/<name>/`), and the watermark policy (self-test green, 4 gate cases). `speak.py --voice me` routes a registered clone voice through the gate instead of `kokoro.create()`; Kokoro voices fall through unchanged (verified).
+- **Ethics rule:** clone yourself freely; cloning anyone else needs an explicit consent record on file (`voices/<name>/consent.json`) AND forces a watermark on the output. **Honest limit:** the gate enforces honest *process*, not *identity* — `kind: self` is self-asserted, so it's an honesty rail for a cooperating user, not a security control.
+- **Home-box TODO (needs the RTX 3060 + a real sample):** the OpenVoice V2 synth call (`clone.synth`) and the *perceptual* (in-signal) watermark. The file-metadata provenance stamp is implemented; the in-signal mark is not faked.
 
-**Exit:** `speak.py "..." --voice me` produces a recognizable clone of the operator's own voice.
+**Exit:** `speak.py "..." --voice me` produces a recognizable clone of the operator's own voice. (Gate + plumbing + engine pick done; blocked on wiring the OpenVoice model on the home box.)
 
 ---
 
@@ -92,3 +93,5 @@ Keep the two axes separate so any result stays honest:
 | 2026-05-26 | Bus speech env-configurable (`BUS_VOICE`/`BUS_LANG`/`BUS_MAX_WORDS`) | Same pattern as `eve_voice.py`'s `EVE_VOICE`; LANG auto-derives from voice prefix matching `speak.lang_for`. Default unchanged so existing wiring keeps working. Drove the bus-monitor revival with `af_nicole` and the 18→50 cap fix once a real test exposed mango truncation |
 | 2026-06-06 | `speak.py` input edge hardened: utf-8-sig default + `--encoding` fallback chain + `strip_html`/`--html`/`.html` auto-detect | Real use case `--file book.html --record book.mp3` needs non-UTF-8 files to not crash AND HTML to not be read aloud as markup. No charset auto-detect dep (it guesses); strip_html is stdlib-only like strip_markdown |
 | 2026-06-06 | `book2audio.py` — document → chaptered audiobook | Generalized from a one-off render of a 700KB HTML book. Reliable spine = numbered size-chunks (any doc); `--by-heading` naming is best-effort (heading conventions vary — verify-first caught a default pattern over-matching prose 35×). GPU default since load-once batch is where CUDA amortizes. Resumable |
+| 2026-06-23 | Cloning engine = OpenVoice V2, not XTTS v2 | License is the deciding factor: OpenVoice V2 is MIT (free commercial use, verified from source); XTTS v2's CPML forbids commercial use, which would silently foreclose the sellable-voice-agent path. OpenVoice is also lighter on CPU. Both pull torch (this repo is torch-free today), so the engine goes behind its own optional install. Decided now, not later, because re-cloning every voice on a different engine is the expensive way to find out |
+| 2026-06-23 | Ethics gate first, before any cloning | Clone yourself freely; cloning anyone else needs a consent record on file AND forces a watermark. Built the gate + registry + watermark policy (`clone.py`) and the `--voice me` routing (`speak.py`) on the office box — all the parts that run without a model. Honest limit named in the gate itself: it enforces honest *process* (consent recorded, output watermarked), not *identity* (`kind: self` is self-asserted) — a local tool can't verify whose voice a sample is |

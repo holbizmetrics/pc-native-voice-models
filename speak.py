@@ -532,7 +532,10 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
     )
     p.add_argument("text", nargs="?", help="text to speak (or pipe via stdin, or use --file)")
     p.add_argument("--file", "-f", metavar="PATH", help="read text to speak from a file")
-    p.add_argument("--voice", default=DEFAULT_VOICE, help=f"voice name (default {DEFAULT_VOICE}; --list-voices to see all)")
+    p.add_argument("--voice", default=DEFAULT_VOICE,
+                   help=f"voice name (default {DEFAULT_VOICE}; --list-voices to see all). "
+                        f"A registered clone voice (e.g. 'me') routes through the cloning "
+                        f"engine + ethics gate instead of Kokoro.")
     p.add_argument("--speed", type=float, default=1.0, help="speech speed multiplier (default 1.0)")
     p.add_argument("--lang", default=None, help="language code (default: auto-derived from voice prefix, e.g. ff_->fr-fr)")
     out = p.add_mutually_exclusive_group()
@@ -619,6 +622,32 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
         if (use_html or args.spoken or args.strip_markdown) and not text.strip():
             sys.exit("nothing left to speak after stripping "
                      + ("HTML" if use_html else "Markdown"))
+
+    # Voice-cloning fork: a registered clone voice (./voices/<name>/) is NOT a Kokoro
+    # voice — it routes through the ethics gate to the cloning engine (OpenVoice V2),
+    # never through kokoro.create(). Kokoro voices fall straight through unchanged, so
+    # this is a no-op for every existing invocation. Runs before load_kokoro() so a
+    # clone request never pays the Kokoro model load.
+    if not args.list_voices:
+        import clone
+        cv = clone.resolve(args.voice)
+        if cv is None and args.voice == clone.SELF_NAME:
+            sys.exit(f"no clone voice '{clone.SELF_NAME}' registered yet. Record a sample "
+                     f"and register it on the home box (see clone.py); this build ships "
+                     f"the ethics gate + scaffold only, not the cloning model.")
+        if cv is not None:
+            decision = clone.consent_gate(cv)
+            print(f"[clone] {cv.name} ({cv.kind}): "
+                  f"{'ALLOW' if decision.allow else 'BLOCK'} - {decision.reason}",
+                  file=sys.stderr)
+            if not decision.allow:
+                sys.exit("[clone] blocked by ethics gate (see reason above)")
+            out_path = Path(args.save or args.record) if (args.save or args.record) else None
+            try:
+                clone.synth(text, cv, out_path, watermark=decision.watermark)
+            except NotImplementedError as e:
+                sys.exit(f"[clone] {e}")
+            return
 
     kokoro = load_kokoro()
 
