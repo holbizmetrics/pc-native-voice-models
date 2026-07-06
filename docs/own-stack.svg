@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 460" font-family="Segoe UI, system-ui, -apple-system, sans-serif">
+  <defs>
+    <marker id="ab" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/>
+    </marker>
+    <marker id="ap" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#a371f7"/>
+    </marker>
+  </defs>
+
+  <!-- backdrop -->
+  <rect x="1" y="1" width="958" height="458" rx="18" fill="#0d1117" stroke="#21262d" stroke-width="2"/>
+
+  <!-- You -->
+  <circle cx="78" cy="150" r="15" fill="none" stroke="#e6edf3" stroke-width="2"/>
+  <path d="M58 192 q20 -26 40 0" fill="none" stroke="#e6edf3" stroke-width="2"/>
+  <text x="78" y="120" text-anchor="middle" fill="#e6edf3" font-size="14">You</text>
+
+  <!-- speak in -->
+  <path d="M100 150 Q158 150 201 167" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#ab)"/>
+  <text x="150" y="138" text-anchor="middle" fill="#58a6ff" font-size="12">speak</text>
+
+  <!-- machine container -->
+  <rect x="180" y="92" width="560" height="188" rx="16" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <circle cx="200" cy="118" r="5" fill="#3fb950"/>
+  <text x="213" y="123" fill="#8b949e" font-size="13" letter-spacing="0.4">your machine — 100% local</text>
+
+  <!-- dictate.py -->
+  <rect x="205" y="142" width="140" height="56" rx="10" fill="#1b2330" stroke="#30363d"/>
+  <text x="275" y="167" text-anchor="middle" fill="#e6edf3" font-size="15" font-weight="600">dictate.py</text>
+  <text x="275" y="185" text-anchor="middle" fill="#8b949e" font-size="12">voice &#8594; text</text>
+
+  <!-- Claude -->
+  <rect x="400" y="142" width="130" height="56" rx="10" fill="#1b2330" stroke="#30363d"/>
+  <text x="465" y="167" text-anchor="middle" fill="#e6edf3" font-size="15" font-weight="600">Claude</text>
+  <text x="465" y="185" text-anchor="middle" fill="#8b949e" font-size="12">your AI</text>
+
+  <!-- speak.py -->
+  <rect x="585" y="142" width="140" height="56" rx="10" fill="#1b2330" stroke="#30363d"/>
+  <text x="655" y="167" text-anchor="middle" fill="#e6edf3" font-size="15" font-weight="600">speak.py</text>
+  <text x="655" y="185" text-anchor="middle" fill="#8b949e" font-size="12">text &#8594; voice</text>
+
+  <!-- inner flow arrows -->
+  <path d="M345 170 L398 170" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#ab)"/>
+  <path d="M530 170 L583 170" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#ab)"/>
+
+  <!-- empathy engine (testing) -->
+  <path d="M465 198 L465 216" fill="none" stroke="#8b949e" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <rect x="398" y="216" width="134" height="38" rx="9" fill="none" stroke="#8b949e" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <text x="465" y="240" text-anchor="middle" fill="#8b949e" font-size="12">empathy &#183; testing</text>
+
+  <!-- hear (return loop to You) -->
+  <path d="M655 198 L655 322 L78 322 L78 200" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#ab)"/>
+  <text x="360" y="340" text-anchor="middle" fill="#58a6ff" font-size="12">hear</text>
+
+  <!-- bus to phone -->
+  <path d="M740 152 L797 152" fill="none" stroke="#a371f7" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ap)"/>
+  <text x="769" y="142" text-anchor="middle" fill="#a371f7" font-size="12">bus</text>
+  <rect x="800" y="120" width="132" height="64" rx="12" fill="#161b22" stroke="#30363d"/>
+  <text x="866" y="148" text-anchor="middle" fill="#e6edf3" font-size="14" font-weight="600">Claude</text>
+  <text x="866" y="167" text-anchor="middle" fill="#8b949e" font-size="12">phone</text>
+
+  <!-- caption -->
+  <text x="460" y="410" text-anchor="middle" fill="#c9d1d9" font-size="15">Own the full stack &#8212; the pieces wire together.</text>
+</svg>
