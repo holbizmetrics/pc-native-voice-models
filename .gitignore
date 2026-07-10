@@ -70,3 +70,7 @@ benchmarks/results/
 .env
 .eve_key
 local_config.json
+
+# Voice-clone registry - personal voice data (samples, embeddings, consent records) - never commit
+voices/
+.venv-openvoice/

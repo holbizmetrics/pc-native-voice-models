@@ -632,9 +632,9 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
         import clone
         cv = clone.resolve(args.voice)
         if cv is None and args.voice == clone.SELF_NAME:
-            sys.exit(f"no clone voice '{clone.SELF_NAME}' registered yet. Record a sample "
-                     f"and register it on the home box (see clone.py); this build ships "
-                     f"the ethics gate + scaffold only, not the cloning model.")
+            sys.exit(f"no clone voice '{clone.SELF_NAME}' registered yet. Record ~30s of "
+                     f"your voice, then enroll it:\n"
+                     f"    python clone.py register {clone.SELF_NAME} <sample.wav>")
         if cv is not None:
             decision = clone.consent_gate(cv)
             print(f"[clone] {cv.name} ({cv.kind}): "
@@ -644,8 +644,9 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
                 sys.exit("[clone] blocked by ethics gate (see reason above)")
             out_path = Path(args.save or args.record) if (args.save or args.record) else None
             try:
-                clone.synth(text, cv, out_path, watermark=decision.watermark)
-            except NotImplementedError as e:
+                clone.synth(text, cv, out_path, watermark=decision.watermark,
+                            speed=args.speed)
+            except (NotImplementedError, RuntimeError) as e:
                 sys.exit(f"[clone] {e}")
             return
 

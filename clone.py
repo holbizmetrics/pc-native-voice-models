@@ -123,24 +123,89 @@ def provenance_tag(voice: CloneVoice) -> dict:
     }
 
 
-# ── synthesis (the OpenVoice V2 call — home-box only) ─────────────────────────────
-def synth(text: str, voice: CloneVoice, out_path: Path | None, watermark: bool):
-    """Generate cloned speech. Intentionally NOT implemented here: OpenVoice V2's model
-    (+ MeloTTS base) and the generation run live on the home box with the RTX 3060 and
-    a real audio sample — out of scope for the office machine. The integration shape:
+# ── synthesis (the OpenVoice V2 call, via the worker subprocess) ──────────────────
+VENV_PY = REPO / ".venv-openvoice" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+WORKER = REPO / "clone_worker.py"
 
-        1. base TTS  : MeloTTS renders `text` in a base speaker
-        2. tone color: OpenVoice ToneColorConverter transfers timbre from voice.ref_audio
-        3. watermark : if `watermark`, embed the perceptual mark + write provenance_tag()
-        4. output    : play (speak.py streaming path) or write to out_path
 
-    Wiring this needs: pip install for OpenVoice V2 + MeloTTS (pulls torch — this repo
-    is torch-free today, so it goes behind its own optional install), the model
-    download, and voice.ref_audio present."""
-    raise NotImplementedError(
-        "voice-clone synthesis runs on the home box (OpenVoice V2 + your sample); "
-        "this office build ships the gate + registry + watermark policy only. "
-        "See clone.synth docstring for the integration shape.")
+def synth(text: str, voice: CloneVoice, out_path: Path | None, watermark: bool,
+          speed: float = 1.0, lang: str | None = None):
+    """Generate cloned speech. The heavy stack (torch + OpenVoice V2 + MeloTTS) lives in
+    its own venv (.venv-openvoice) and runs in a SUBPROCESS (clone_worker.py) — the
+    caller's venv stays torch-free. Plays the result when out_path is None, else writes
+    it. `lang` is a MeloTTS base-speaker language (default EN_NEWEST; env CLONE_LANG)."""
+    if not VENV_PY.is_file():
+        raise NotImplementedError(
+            "OpenVoice venv not found (.venv-openvoice). Home-box setup: create it and "
+            "install OpenVoice V2 + MeloTTS + checkpoints (see clone_worker.py docstring).")
+    if not voice.ref_audio.is_file():
+        raise RuntimeError(
+            f"no reference sample at {voice.ref_audio} — record ~30s of the voice and "
+            f"register it: python clone.py register {voice.name} <sample.wav>")
+
+    import subprocess
+    import tempfile
+    lang = lang or os.environ.get("CLONE_LANG", "EN_NEWEST")
+    tmp_name = None
+    if out_path is None:
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp.close()
+        tmp_name = tmp.name
+        target = Path(tmp_name)
+    else:
+        target = out_path
+    cmd = [str(VENV_PY), str(WORKER), "--text", text, "--ref", str(voice.ref_audio),
+           "--voice-dir", str(voice.dir), "--out", str(target), "--speed", str(speed),
+           "--lang", lang]
+    if watermark:
+        cmd.append("--watermark")
+    try:
+        proc = subprocess.run(cmd, cwd=str(REPO))   # worker stderr = live progress
+        if proc.returncode != 0:
+            raise RuntimeError(f"clone worker failed (exit {proc.returncode}) — see above")
+        if out_path is None:
+            _play(target)
+    finally:
+        if tmp_name is not None:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+
+
+def _play(path: Path) -> None:
+    """Whole-file playback (MeloTTS renders complete files; no streaming to chase)."""
+    import sounddevice as sd
+    import soundfile as sf
+    data, sr = sf.read(str(path))
+    sd.play(data, sr)
+    sd.wait()
+
+
+# ── registration (enroll a reference sample as a named clone voice) ───────────────
+def register(name: str, sample: Path, kind: str | None = None) -> CloneVoice:
+    """Enroll `sample` as ./voices/<name>/ref.wav + meta.json. Non-wav inputs are
+    converted via libsndfile (mp3/flac/ogg fine; m4a is not — convert those first).
+    A stale cached embedding (se.pth) is dropped so the next synth re-extracts."""
+    import shutil
+    from datetime import date
+    kind = kind or ("self" if name == SELF_NAME else "other")
+    vdir = VOICES_DIR / name
+    vdir.mkdir(parents=True, exist_ok=True)
+    ref = vdir / "ref.wav"
+    if sample.suffix.lower() == ".wav":
+        shutil.copyfile(sample, ref)
+    else:
+        import soundfile as sf
+        data, sr = sf.read(str(sample))
+        sf.write(str(ref), data, sr)
+    (vdir / "meta.json").write_text(json.dumps(
+        {"name": name, "kind": kind, "created": date.today().isoformat()},
+        indent=2), encoding="utf-8")
+    se_cache = vdir / "se.pth"
+    if se_cache.is_file():
+        se_cache.unlink()
+    return CloneVoice(name=name, kind=kind, ref_audio=ref, dir=vdir)
 
 
 # ── self-test: the gate over the cases it must get right ─────────────────────────
@@ -185,4 +250,18 @@ def _selftest() -> int:
 
 if __name__ == "__main__":
     import sys
+    if len(sys.argv) >= 4 and sys.argv[1] == "register":
+        name, sample = sys.argv[2], Path(sys.argv[3])
+        kind = sys.argv[4] if len(sys.argv) > 4 else None
+        if not sample.is_file():
+            sys.exit(f"sample not found: {sample}")
+        cv = register(name, sample, kind)
+        print(f"registered clone voice '{cv.name}' (kind={cv.kind}) at {cv.dir}")
+        if cv.kind == "other":
+            print("NOTE: kind=other requires voices/%s/consent.json before it will speak "
+                  "(see consent_template)." % cv.name)
+        sys.exit(0)
+    if len(sys.argv) > 1:
+        sys.exit("usage: clone.py                          # run the gate self-test\n"
+                 "       clone.py register <name> <sample> [self|other]")
     sys.exit(1 if _selftest() else 0)
