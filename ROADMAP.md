@@ -44,7 +44,9 @@ The honest gap: v1 is the operator's *tool* over *Kokoro's* voices. Voice-clonin
 - **Perceptual watermark LIVE with verify-after-embed:** wavmark embeds a 4-char tag (`PNVM`, 32 bits in the first 16000-sample chunk — fits any clip ≥ ~0.75s). Found live: OpenVoice *silently skips* the mark on too-short audio while reporting success — so the worker now decodes the written file and **refuses to emit** a forced-watermark output whose mark can't be verified. The gate's "output WILL be watermarked" is now enforced, not promised.
 - **Timing (CPU, warm):** ~20-25s wall per utterance (venv + model load dominates; MeloTTS render ~4s, conversion ~2s). Fine for validation; a resident/daemon mode or CUDA opt-in is the known lever if real use wants it snappier.
 
-**Exit:** `speak.py "..." --voice me` produces a recognizable clone of the operator's own voice. (Engine wired + proven on a stand-in reference 2026-07-10; remaining: record ~30s of the operator → `python clone.py register me <clip.wav>`.)
+**Exit:** `speak.py "..." --voice me` produces a recognizable clone of the operator's own voice.
+
+**✓ EXIT FIRED 2026-07-10** — operator registered his own sample and confirmed by ear same day: *"I would say it works … more than fine. Didn't even expect it to work that well, because that sample I gave it was VERY short."* The short-sample surprise is by design: OpenVoice extracts a single global timbre vector, which stabilizes after ~10s of audio — the trade-off is it captures tone color, not the speaker's rhythm/expressiveness (that ceiling is the engine's, not the sample's). Named friction from first real use: **every utterance reloads all models (~20s wall)** — a fresh worker process per call. Known lever: resident/daemon mode (load once, ~3-5s per utterance); build when interactive use asks for it. Advancing to **After: v2 non-verbal**.
 
 ---
 
