@@ -152,6 +152,27 @@ _MD_EMPHASIS = re.compile(r"(\*\*\*|\*\*|\*|___|__|~~)(.*?)\1", re.DOTALL)
 # its own line only rarely, so this targets actions without eating real prose.
 _MD_STAGE_LINE = re.compile(r"^[*_]{1,3}[^*_].*[*_]{1,3}$")
 
+# Inline stage directions (caught live 2026-07-13: "*settles in* My voice…" was
+# SPOKEN as "settles in My voice…"). Eve's dominant idiom is the leading action —
+# "*smiles* Good —", "*laughs softly* Caught me." — plus trailing/mid-sentence
+# asides after sentence-final punctuation. Heuristic: an emphasis span is an
+# ACTION (drop it) when it sits at a sentence boundary on BOTH sides —
+# before: start of line, or after .!?…:;)"” — after: end of line, or the next
+# word starts with a capital / quote / open-paren. Genuine inline emphasis
+# ("*Never* do that") is followed by lowercase prose and is kept.
+_MD_ACTION_SPAN = re.compile(r"([*_]{1,3})([^*_\n]+?)\1")
+_BOUND_BEFORE = ".!?…:;)\"”*_"   # *_ = an adjacent emphasis span (consecutive actions)
+
+
+def _drop_inline_actions(line: str) -> str:
+    def _sub(m: re.Match) -> str:
+        before = line[:m.start()].rstrip()
+        after = line[m.end():].lstrip()
+        at_boundary_before = (not before) or (before[-1] in _BOUND_BEFORE)
+        at_boundary_after = (not after) or after[0].isupper() or after[0] in "\"“(*'"
+        return "" if (at_boundary_before and at_boundary_after) else m.group(0)
+    return _MD_ACTION_SPAN.sub(_sub, line)
+
 
 def strip_markdown(text: str, drop_actions: bool = False) -> str:
     """Best-effort Markdown -> plain prose for TTS. Removes formatting markers and
@@ -166,6 +187,8 @@ def strip_markdown(text: str, drop_actions: bool = False) -> str:
     t = _MD_HTML_TAG.sub(" ", t)       # drop raw HTML tags (SVG/audio/etc.)
     if drop_actions:                   # drop whole-line *stage directions*
         t = "\n".join(ln for ln in t.split("\n") if not _MD_STAGE_LINE.match(ln.strip()))
+        # …and inline ones (leading "*smiles* Good —", trailing/mid-sentence asides)
+        t = "\n".join(_drop_inline_actions(ln) for ln in t.split("\n"))
     t = _MD_IMAGE.sub(r"\1", t)        # image -> its alt text
     t = _MD_LINK.sub(r"\1", t)         # [text](url) -> text
     t = _MD_INLINE_CODE.sub(r"\1", t)  # `code` -> code
