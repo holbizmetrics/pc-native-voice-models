@@ -45,6 +45,7 @@ import os
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -92,23 +93,43 @@ def last_assistant_text(transcript_path: str) -> str:
     return text
 
 
-def _daemon_speak(text: str, voice: str) -> bool:
-    """Hand the utterance to the resident warm daemon. True = accepted (or the
-    reply had nothing speakable after stripping — either way, done)."""
-    port = int(os.getenv("SPEAK_DAEMON_PORT", "48765"))
+def _daemon_speak(text: str, voice: str) -> str:
+    """Hand the utterance to the resident warm daemon.
+    Returns "done" (spoken / nothing speakable), "warming" (a daemon exists but
+    can't take this one — fall back, do NOT spawn another), or "down" (no
+    daemon — fall back AND spawn one for next time).
+
+    Key distinction: a CONNECT failure means no daemon (spawn); a connected-
+    but-unanswered request means one is loading its model (the load holds the
+    GIL, so it may not even manage a "warming" reply — don't spawn a second).
+    The request we leave behind in its backlog is killed daemon-side by the
+    stale-drop ("ts" below), so it is never spoken late/twice."""
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.5) as s:
-            s.settimeout(3.0)
-            s.sendall(json.dumps({"text": text, "voice": voice, "spoken": True})
-                      .encode("utf-8") + b"\n")
-            return s.recv(16) in (b"ok", b"empty")
+        port = int(os.getenv("SPEAK_DAEMON_PORT", "48765"))
+    except ValueError:
+        port = 48765
+    try:
+        s = socket.create_connection(("127.0.0.1", port), timeout=0.5)
     except Exception:
-        return False
+        return "down"
+    try:
+        with s:
+            s.settimeout(1.5)   # warm acks arrive in ~10ms; don't stall a cold session
+            s.sendall(json.dumps({"text": text, "voice": voice, "spoken": True,
+                                  "ts": time.time()}).encode("utf-8") + b"\n")
+            resp = s.recv(16)
+            if resp in (b"ok", b"empty"):
+                return "done"
+            return "warming"    # warming/stale/err/anything: a daemon exists
+    except Exception:
+        return "warming"        # connected but no answer: it's loading — don't spawn
 
 
 def _start_daemon(py: str) -> None:
     """Spawn the daemon detached so the NEXT reply finds it warm. A second
-    spawn is harmless — the port bind is the single-instance guard."""
+    spawn is harmless — the port bind is the single-instance guard. Its stderr
+    goes to speak_daemon.log at the repo root (append), not DEVNULL — when the
+    voice goes quiet, the log is the first place to look."""
     daemon = Path(__file__).resolve().parent / "speak_daemon.py"
     kwargs = {}
     if os.name == "nt":
@@ -116,8 +137,12 @@ def _start_daemon(py: str) -> None:
     else:
         kwargs["start_new_session"] = True
     try:
+        log = open(ROOT / "speak_daemon.log", "ab")
+    except Exception:
+        log = subprocess.DEVNULL
+    try:
         subprocess.Popen([py, str(daemon)], stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=log,
                          **kwargs)
     except Exception:
         pass
@@ -135,7 +160,10 @@ def main() -> None:
     if not text:
         return  # tool-only turn or empty — nothing to speak
 
-    cap = int(os.getenv("CC_SPEAK_MAXCHARS", "1200"))
+    try:
+        cap = int(os.getenv("CC_SPEAK_MAXCHARS", "1200"))
+    except ValueError:
+        cap = 1200
     if cap and len(text) > cap:
         text = text[:cap]
 
@@ -143,12 +171,15 @@ def main() -> None:
     voice = os.getenv("CC_SPEAK_VOICE", "af_heart")
 
     # Fast path: resident warm daemon (speech in ~1s, playback serialized,
-    # latest-wins). If it's not up, start it for next time and fall through to
-    # the one-shot path for this reply.
+    # latest-wins). "warming" = one is already loading its model — fall through
+    # to one-shot for THIS reply but don't spawn a second. "down" = start one
+    # for next time and fall through.
     if not os.getenv("CC_SPEAK_NO_DAEMON"):
-        if _daemon_speak(text, voice):
+        status = _daemon_speak(text, voice)
+        if status == "done":
             return
-        _start_daemon(py)
+        if status == "down":
+            _start_daemon(py)
 
     # Spawn DETACHED so a long playback never freezes the Claude Code session.
     kwargs = {}

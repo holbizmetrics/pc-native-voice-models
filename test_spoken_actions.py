@@ -33,6 +33,10 @@ DROP_CASES = [
     ("I just want to know how heavy it is. *staying soft*",
      "I just want to know how heavy it is."),                 # trailing action
     ("*softens* *staying with it* Then arrive tired.", "Then arrive tired."),  # consecutive actions
+    # v2 additions (blind-audit round, 2026-07-13): boundary set extended
+    ("You should have heard me — *smiles*", "You should have heard me,"),  # trailing action after em-dash
+    ("Yes, *nods* I think so.", "Yes, I think so."),          # action after comma
+    ("*checks the list* 3 things left.", "3 things left."),   # digit continuation
 ]
 
 KEEP_CASES = [
@@ -41,6 +45,16 @@ KEEP_CASES = [
      "You should never force-kill that process."),
     ("*Never* do that again.", "Never do that again."),       # leading emphasis, lowercase continuation
     ("That is the *realest* thing I have.", "That is the realest thing I have."),
+    # v2 additions (blind-audit round, 2026-07-13): prose-loss regressions locked out
+    ("**Stop.** That hurts.", "Stop. That hurts."),           # bold sentence-lead is EMPHASIS, never action
+    ("***Listen.*** You need to hear this.", "Listen. You need to hear this."),
+    ("It matters. *Everything* I do depends on it.",
+     "It matters. Everything I do depends on it."),           # capitalized span = emphasis
+    ("Ehrlich. *Nie* Zeit für mich.", "Ehrlich. Nie Zeit für mich."),  # German nouns capitalize — structural
+    ("* **Kokoro** is the local voice engine.", "Kokoro is the local voice engine."),  # bullet + bold lead
+    # ACCEPTED MISS (documented trade-off): lowercase continuation keeps the span —
+    # a spoken "nods" is cheaper than deleted prose; locks the asymmetry choice.
+    ("*nods* yes, exactly.", "nods yes, exactly."),
 ]
 
 

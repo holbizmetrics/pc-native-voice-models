@@ -74,3 +74,4 @@ local_config.json
 # Voice-clone registry - personal voice data (samples, embeddings, consent records) - never commit
 voices/
 .venv-openvoice/
+speak_daemon.log

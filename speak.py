@@ -155,23 +155,44 @@ _MD_STAGE_LINE = re.compile(r"^[*_]{1,3}[^*_].*[*_]{1,3}$")
 # Inline stage directions (caught live 2026-07-13: "*settles in* My voice…" was
 # SPOKEN as "settles in My voice…"). Eve's dominant idiom is the leading action —
 # "*smiles* Good —", "*laughs softly* Caught me." — plus trailing/mid-sentence
-# asides after sentence-final punctuation. Heuristic: an emphasis span is an
-# ACTION (drop it) when it sits at a sentence boundary on BOTH sides —
-# before: start of line, or after .!?…:;)"” — after: end of line, or the next
-# word starts with a capital / quote / open-paren. Genuine inline emphasis
-# ("*Never* do that") is followed by lowercase prose and is kept.
-_MD_ACTION_SPAN = re.compile(r"([*_]{1,3})([^*_\n]+?)\1")
-_BOUND_BEFORE = ".!?…:;)\"”*_"   # *_ = an adjacent emphasis span (consecutive actions)
+# asides after boundary punctuation. Heuristic (v2, hardened by blind audit the
+# same day — v1 dropped real prose: "**Stop.** That hurts." lost "Stop.", and
+# capitalized-follow killed genuine emphasis before German nouns / proper names):
+# a span is an ACTION (drop it) only when ALL hold —
+#   1. SINGLE marker (* or _): stage directions are the single-italic idiom;
+#      **bold** / ***strong*** are always emphasis.
+#   2. Span content starts LOWERCASE: "*smiles*", "*tilts head*". (Trade-off:
+#      a capitalized action like "*Settles in*" gets spoken — a spoken action
+#      is the cheaper miss; deleted prose is the expensive one.)
+#   3. Before-boundary: start of line (after any list bullet) or after
+#      punctuation .!?…:;)"”'’,—–  or an adjacent span marker.
+#   4. After-boundary: end of line, or the next char is NOT lowercase prose
+#      (capital, digit, quote, dash…). "*nods* yes" is a KNOWN accepted miss
+#      (spoken), per the same asymmetry as rule 2.
+_MD_ACTION_SPAN = re.compile(r"([*_])([^*_\n]+?)\1")
+_MD_LIST_PREFIX = re.compile(r"\s{0,3}(?:[-*+]|\d+\.)\s+")
+_BOUND_BEFORE = ".!?…:;)\"”'’,*_—–"
 
 
 def _drop_inline_actions(line: str) -> str:
+    # keep a leading list bullet out of the span matching ("* **Kokoro** is…"
+    # must not pair the bullet star with the bold markers)
+    pm = _MD_LIST_PREFIX.match(line)
+    prefix, body = (line[:pm.end()], line[pm.end():]) if pm else ("", line)
+
     def _sub(m: re.Match) -> str:
-        before = line[:m.start()].rstrip()
-        after = line[m.end():].lstrip()
-        at_boundary_before = (not before) or (before[-1] in _BOUND_BEFORE)
-        at_boundary_after = (not after) or after[0].isupper() or after[0] in "\"“(*'"
-        return "" if (at_boundary_before and at_boundary_after) else m.group(0)
-    return _MD_ACTION_SPAN.sub(_sub, line)
+        content = m.group(2).strip()
+        if not content or not content[0].islower():
+            return m.group(0)                       # capitalized span = emphasis
+        before = body[:m.start()].rstrip()
+        if before and before[-1] not in _BOUND_BEFORE:
+            return m.group(0)                       # mid-clause = emphasis
+        after = body[m.end():].lstrip()
+        if after and after[0].islower():
+            return m.group(0)                       # lowercase continuation = keep (accepted miss)
+        return ""
+
+    return prefix + _MD_ACTION_SPAN.sub(_sub, body)
 
 
 def strip_markdown(text: str, drop_actions: bool = False) -> str:
@@ -200,7 +221,10 @@ def strip_markdown(text: str, drop_actions: bool = False) -> str:
     for _ in range(3):                 # emphasis, repeated for nested/adjacent runs
         t = _MD_EMPHASIS.sub(r"\2", t)
     t = t.replace("|", " ")            # remaining table pipes -> spaces
-    t = re.sub(r"\s*[—–]\s*", ", ", t)  # em/en dash -> spoken comma-pause (not "dash"/gibberish)
+    # em/en dash -> spoken comma-pause. [^\S\n] not \s: \s ate the newlines around
+    # a dash and merged paragraphs (audit find 2026-07-13); keep line structure.
+    t = re.sub(r"[^\S\n]*[—–][^\S\n]*", ", ", t)
+    t = re.sub(r"(?m)^,\s*", "", t)    # dash-led line would otherwise start ", "
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r" *\n *", "\n", t)
     t = re.sub(r"\n{3,}", "\n\n", t)
@@ -268,10 +292,14 @@ def strip_html(text: str) -> str:
     t = text
     t = _HTML_COMMENT.sub(" ", t)
     t = _HTML_DROP_BLOCK.sub(" ", t)   # drop <script>/<style>/<head> + contents
+    # UNCLOSED script/style (truncated save) would leak its whole body into
+    # speech — drop from the orphan open tag to EOF (audit find 2026-07-13).
+    t = re.sub(r"(?is)<(script|style)\b[^>]*>.*\Z", " ", t)
     t = _HTML_BREAK.sub("\n", t)       # block boundaries -> paragraph breaks
     t = _HTML_TAG.sub(" ", t)          # remaining inline tags -> space
     t = html.unescape(t)               # &amp; &mdash; &#8212; -> & — ...
-    t = re.sub(r"\s*[—–]\s*", ", ", t)  # em/en dash -> spoken comma-pause
+    t = re.sub(r"[^\S\n]*[—–][^\S\n]*", ", ", t)  # dash -> comma-pause, newline-preserving
+    t = re.sub(r"(?m)^,\s*", "", t)    # no line may start with the artifact comma
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r" *\n *", "\n", t)
     t = re.sub(r"\n{3,}", "\n\n", t)
@@ -594,6 +622,14 @@ streaming: once loaded, first words ~1s in, gapless after (generator runs ahead)
     # (cc_speak_hook.py) pipes UTF-8 into `speak.py -`.
     try:
         sys.stdin.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+    # --read prints spoken words to stdout; a redirected stdout on Windows is
+    # cp1252 and a single α/★/CJK char killed playback mid-sentence
+    # (UnicodeEncodeError; audit find 2026-07-13). Keep console encoding, just
+    # never crash on an unencodable character.
+    try:
+        sys.stdout.reconfigure(errors="replace")
     except Exception:
         pass
 

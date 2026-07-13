@@ -4,23 +4,45 @@
 The known lever from ROADMAP.md ("resident/daemon mode — build when interactive
 use asks for it"): interactive use asked on 2026-07-13 (the Eve Claude Code
 surface — per-reply cold start was the whole felt delay). A fresh process pays
-venv start + model load (~3-4s CPU) on EVERY utterance; this daemon pays it once
-and then each request costs only synthesis (~1s to first audio, streamed).
+venv start + model load (~3-12s CPU) on EVERY utterance; this daemon pays it
+once and each request then costs only synthesis (~1s to first audio, streamed).
 
-Shape:
-  - TCP on 127.0.0.1:SPEAK_DAEMON_PORT (default 48765). Localhost-only.
-  - One JSON object per connection, newline-terminated:
-      {"text": "...", "voice": "af_heart", "speed": 1.0, "spoken": true}
-    or {"cmd": "ping"} -> "pong", {"cmd": "quit"} -> daemon exits.
-    Replies "ok" once the utterance is accepted.
+Hardened same day by a 2-lens blind audit + live repro. The design points that
+matter (each one traces to a caught defect):
+
+  - TCP on 127.0.0.1:SPEAK_DAEMON_PORT (default 48765), localhost-only.
+    One JSON object per connection, newline-terminated:
+      {"text": "...", "voice": "af_heart", "speed": 1.0, "spoken": true,
+       "ts": <sender time.time()>}
+    plus {"cmd": "ping"} -> pong|warming and {"cmd": "quit"}.
+  - STALE-DROP is the load-bearing warm-window guard: the port binds before the
+    model loads (bind-first IS the single-instance guard), so requests sent
+    during the load sit in the socket backlog and would be spoken LATE and
+    TWICE once the model lands (reproduced live; Windows even drains the
+    backlog LIFO, replaying the OLDEST reply). A "warming" reply alone cannot
+    close this: the model load holds the GIL, so handle() may only run AFTER
+    warm-up. Any request older than STALE_MAX seconds is dropped with b"stale".
   - LATEST-WINS playback: a new utterance gracefully stops the current one
-    (stop writing slices, close the stream cleanly — never kill the process,
-    the RODE-endpoint lesson) and replaces anything queued. For a dialog,
-    freshness beats completeness; the old overlapping-processes behavior is
-    strictly worse on both axes.
-  - Single instance by construction: a second daemon fails to bind and exits.
+    (stop writing 40ms slices, close the stream — never kill the process, the
+    RODE-endpoint lesson). Identical text to what's playing is deduped (two
+    rapid Stop-hook firings extract the same reply; replaying it from the
+    start is an audible stutter). Honest bound: an interrupt cannot land while
+    speak.generate() is synthesizing a sentence (blocking ONNX call) — worst
+    case a few seconds on CPU, then the cut lands.
+  - SELF-HEAL over zombie: if the model load fails, if the playback worker
+    dies, or if 3 consecutive utterances fail (classic after OS sleep/resume
+    changes the audio device), the daemon EXITS — freeing the port so the next
+    hook firing starts a fresh daemon — instead of holding the port while
+    acking "ok" forever mute.
+  - Graceful quit: stops playback and joins the worker before exiting, so the
+    output stream is closed properly even mid-utterance.
+  - No auth (accepted, single-user desktop): any local process can make the
+    box speak or quit the daemon; port squatting could intercept reply text.
+    Recorded as an OPEN item in the audit ledger — named pipe / token if the
+    threat model ever changes.
 
-Run it (usually you don't — cc_speak_hook.py auto-starts it detached):
+Run it (usually you don't — cc_speak_hook.py auto-starts it detached, logging
+to speak_daemon.log next to this repo's root):
     python integrations/speak_daemon.py            # foreground, logs to stderr
     KOKORO_GPU=1 python integrations/speak_daemon.py   # amortized => GPU wins (~0.5s/gen)
 
@@ -46,7 +68,13 @@ import numpy as np  # noqa: E402
 
 import speak  # noqa: E402  (the shared mouth — model load, chunking, stripping)
 
-PORT = int(os.getenv("SPEAK_DAEMON_PORT", "48765"))
+try:
+    PORT = int(os.getenv("SPEAK_DAEMON_PORT", "48765"))
+except ValueError:
+    PORT = 48765
+STALE_MAX = 8.0          # seconds; older requests are backlog ghosts — drop them
+MAX_CONSEC_FAILURES = 3  # then exit so the next hook start heals us
+CONN_DEADLINE = 5.0      # total seconds one connection may occupy the accept loop
 
 # keep stderr alive on cp1252 consoles (standing Windows class: non-ASCII print crash)
 try:
@@ -64,23 +92,47 @@ class Player:
 
     submit() parks the newest utterance and interrupts the current one; the
     worker thread speaks whatever is parked. Interruption is graceful: the
-    40 ms slice loop just stops writing and closes the stream (never a process
+    40 ms slice loop stops writing and closes the stream (never a process
     kill — see feedback_never_force_kill_audio_stream_process).
     """
 
     def __init__(self, kokoro):
+        # Import HERE, not in the worker: if PortAudio/device init fails we want
+        # the daemon to die loudly (port freed -> next hook heals cold) instead
+        # of a mute worker-less daemon acking "ok" forever.
+        import sounddevice as sd
+        self._sd = sd
         self.kokoro = kokoro
         self._pending: dict | None = None
+        self._current_text: str = ""
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop_current = threading.Event()
-        threading.Thread(target=self._run, daemon=True).start()
+        self._shutdown = False
+        self._consec_failures = 0
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
 
-    def submit(self, req: dict) -> None:
+    def submit(self, req: dict) -> str:
+        """Park req as the newest utterance. Returns 'ok' or 'dup'."""
         with self._lock:
+            if req["text"] == self._current_text and not self._stop_current.is_set():
+                return "dup"   # double Stop-hook firing on the same reply — don't stutter-restart
             self._pending = req
         self._stop_current.set()   # cut the current utterance, if any
         self._wake.set()
+        return "ok"
+
+    def stop(self, join_timeout: float = 2.0) -> None:
+        """Graceful shutdown: interrupt playback, let the worker close its
+        stream, and join it — never exit with a live OutputStream."""
+        self._shutdown = True
+        self._stop_current.set()
+        self._wake.set()
+        self._thread.join(timeout=join_timeout)
+
+    def alive(self) -> bool:
+        return self._thread.is_alive()
 
     def _take(self) -> dict | None:
         with self._lock:
@@ -88,20 +140,37 @@ class Player:
         return req
 
     def _run(self) -> None:
-        import sounddevice as sd
-        while True:
+        while not self._shutdown:
             self._wake.wait()
             self._wake.clear()
             req = self._take()
-            if req is None:
+            if req is None or self._shutdown:
                 continue
             self._stop_current.clear()
+            with self._lock:
+                # a submit() may have landed between _take() and clear() — its
+                # interrupt flag was just wiped; loop so the newer one wins
+                if self._pending is not None:
+                    self._wake.set()
+                    continue
+                self._current_text = req["text"]
             try:
-                self._speak_cancellable(sd, req)
-            except Exception as e:
-                _log(f"utterance failed: {type(e).__name__}: {e}")
+                self._speak_cancellable(req)
+                self._consec_failures = 0
+            except BaseException as e:   # incl. SystemExit (zh voice w/o misaki[zh])
+                self._consec_failures += 1
+                _log(f"utterance failed ({self._consec_failures}/{MAX_CONSEC_FAILURES}): "
+                     f"{type(e).__name__}: {e}")
+                if self._consec_failures >= MAX_CONSEC_FAILURES:
+                    _log("too many consecutive failures (dead audio device?) - "
+                         "exiting so the next hook start heals us")
+                    os._exit(1)
+            finally:
+                with self._lock:
+                    self._current_text = ""
 
-    def _speak_cancellable(self, sd, req: dict) -> None:
+    def _speak_cancellable(self, req: dict) -> None:
+        sd = self._sd
         text = req["text"]
         voice = req.get("voice", "af_heart")
         speed = float(req.get("speed", 1.0))
@@ -121,7 +190,8 @@ class Player:
                 if first and os.getenv("SPEAK_TIMING"):
                     _log(f"time-to-first-audio {time.time() - t0:.2f}s")
                 first = False
-                # 40 ms slices so an interrupt lands fast, mid-sentence
+                # 40 ms slices so an interrupt lands fast during playback
+                # (during generate() above it cannot — blocking ONNX call)
                 frame = max(1, int(sr * 0.04))
                 for i in range(0, len(samples), frame):
                     if self._stop_current.is_set():
@@ -137,23 +207,41 @@ class Player:
                  + (" (interrupted)" if self._stop_current.is_set() else ""))
 
 
-def handle(conn: socket.socket, player: Player) -> bool:
-    """Handle one connection. Returns False if the daemon should exit."""
-    conn.settimeout(5.0)
+def handle(conn: socket.socket, player: Player | None) -> bool:
+    """Handle one connection. Returns False if the daemon should exit.
+
+    player=None means the model is still loading: text requests get b"warming"
+    and are NEVER queued. Requests older than STALE_MAX get b"stale" and are
+    dropped — the backlog-ghost guard (see module docstring)."""
+    conn.settimeout(2.0)
+    t_conn = time.time()
     buf = b""
     try:
         while b"\n" not in buf and len(buf) < 1_000_000:
+            if time.time() - t_conn > CONN_DEADLINE:
+                return True   # slow client: drop, keep serving others
             chunk = conn.recv(65536)
             if not chunk:
                 break
             buf += chunk
         req = json.loads(buf.decode("utf-8", errors="replace").strip() or "{}")
         if req.get("cmd") == "ping":
-            conn.sendall(b"pong")
+            conn.sendall(b"pong" if player is not None else b"warming")
             return True
         if req.get("cmd") == "quit":
             conn.sendall(b"bye")
             return False
+        if player is None:
+            conn.sendall(b"warming")
+            return True
+        if not player.alive():
+            _log("playback worker is dead - exiting so the next hook start heals us")
+            os._exit(1)
+        ts = req.get("ts")
+        if isinstance(ts, (int, float)) and time.time() - ts > STALE_MAX:
+            _log(f"dropped stale request ({time.time() - ts:.1f}s old, backlog ghost)")
+            conn.sendall(b"stale")
+            return True
         text = (req.get("text") or "").strip()
         if not text:
             conn.sendall(b"empty")
@@ -164,7 +252,7 @@ def handle(conn: socket.socket, player: Player) -> bool:
                 conn.sendall(b"empty")   # stage-directions-only reply: nothing to say
                 return True
         req["text"] = text
-        player.submit(req)
+        player.submit(req)               # 'dup' still acks ok — the text IS being spoken
         conn.sendall(b"ok")
     except Exception as e:
         _log(f"bad request: {type(e).__name__}: {e}")
@@ -190,17 +278,37 @@ def main() -> None:
         sys.exit(0)
     srv.listen(8)
 
-    _log(f"loading Kokoro (provider selection per speak.py; KOKORO_GPU={os.getenv('KOKORO_GPU', '')!r})")
-    t0 = time.time()
-    kokoro = speak.load_kokoro()
-    _log(f"model warm in {time.time() - t0:.1f}s — listening on 127.0.0.1:{PORT}")
+    # Load the model in the BACKGROUND so the accept loop can answer "warming"
+    # whenever the GIL lets it; the stale-drop in handle() covers the rest.
+    state: dict = {"player": None}
 
-    player = Player(kokoro)
+    def _warm() -> None:
+        _log(f"loading Kokoro (provider selection per speak.py; KOKORO_GPU={os.getenv('KOKORO_GPU', '')!r})")
+        t0 = time.time()
+        try:
+            kokoro = speak.load_kokoro()
+            state["player"] = Player(kokoro)
+        except BaseException as e:   # incl. SystemExit from missing model files
+            _log(f"model/audio init FAILED ({type(e).__name__}: {e}) - exiting so "
+                 f"clients stop seeing 'warming' forever")
+            os._exit(1)
+        _log(f"model warm in {time.time() - t0:.1f}s - serving on 127.0.0.1:{PORT}")
+
+    threading.Thread(target=_warm, daemon=True).start()
+    _log(f"listening on 127.0.0.1:{PORT} (warming)")
+
     while True:
-        conn, _ = srv.accept()
-        if not handle(conn, player):
+        try:
+            conn, _ = srv.accept()
+        except OSError as e:   # transient WSAECONNRESET-class accept errors
+            _log(f"accept error ({type(e).__name__}: {e}) - continuing")
+            continue
+        if not handle(conn, state["player"]):
             break
-    _log("quit requested — bye")
+    player = state["player"]
+    if player is not None:
+        player.stop()
+    _log("quit requested - bye")
 
 
 if __name__ == "__main__":
