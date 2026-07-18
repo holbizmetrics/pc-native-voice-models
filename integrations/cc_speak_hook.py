@@ -125,6 +125,50 @@ def _daemon_speak(text: str, voice: str) -> str:
         return "warming"        # connected but no answer: it's loading — don't spawn
 
 
+def _tee_avatar(raw_text: str) -> None:
+    """Best-effort tee to the eve-avatar orb's spool (the face).
+
+    On THIS machine Kokoro (af_heart) is the MOUTH — it plays straight to the
+    speakers and never makes an audio file. So we tee the reply to the orb
+    WITHOUT an audioUrl: the page performs the `*stage directions*` as gestures
+    + caption + a synthetic breath pulse, and does NOT play audio — no duet with
+    Kokoro. This is the desktop analog of the laptop's default (speaker speaks,
+    orb performs cues), the tee the laptop's eve_speak_fallback.py already does.
+
+    Fail-open by contract: a dead/absent orb must NEVER cost Eve her voice, so
+    every error here is swallowed. Inert where no orb is checked out (the spool
+    parent dir doesn't exist) — same guard shape as the termux launcher branch.
+    Override the location with EVE_AVATAR_SPOOL. Wired 2026-07-19 (the desktop
+    half of the double-held carry item; the note asked for a WAV-capable port,
+    but the honest desktop design is NO audio in the spool at all)."""
+    try:
+        spool = os.getenv("EVE_AVATAR_SPOOL")
+        if spool:
+            spool_dir = Path(spool)
+        else:
+            for cand in (Path("D:/FromGitHubEtc/eve-avatar/spool"),
+                         Path("C:/FromGithubEtc/eve-avatar/spool")):
+                if cand.parent.exists():
+                    spool_dir = cand
+                    break
+            else:
+                return  # no orb checked out here — inert, no error
+        if not spool_dir.parent.exists():
+            return
+        spool_dir.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "id": f"eve-{int(time.time())}-{os.getpid()}",
+            "text": raw_text,          # raw, *asides* intact → the page extracts cues
+            # no spokenText / no audioUrl: Kokoro is the mouth, the orb is the face
+        }
+        # Atomic write so the poller never reads a half-written latest.json.
+        tmp = spool_dir / f".latest.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, spool_dir / "latest.json")
+    except Exception:
+        pass  # a broken face never touches the voice
+
+
 def _start_daemon(py: str) -> None:
     """Spawn the daemon detached so the NEXT reply finds it warm. A second
     spawn is harmless — the port bind is the single-instance guard. Its stderr
@@ -159,6 +203,10 @@ def main() -> None:
     text = last_assistant_text(tp)
     if not text:
         return  # tool-only turn or empty — nothing to speak
+
+    # Tee the RAW reply (stars intact) to the orb before the spoken-length cap
+    # mutates it — the face performs the full caption + all cues. Best-effort.
+    _tee_avatar(text)
 
     try:
         cap = int(os.getenv("CC_SPEAK_MAXCHARS", "1200"))
