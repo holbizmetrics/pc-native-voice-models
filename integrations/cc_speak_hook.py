@@ -169,6 +169,65 @@ def _tee_avatar(raw_text: str) -> None:
         pass  # a broken face never touches the voice
 
 
+def _avatar_spool_dir() -> Path | None:
+    """The orb's spool dir if an orb is checked out here, else None (inert)."""
+    spool = os.getenv("EVE_AVATAR_SPOOL")
+    if spool:
+        d = Path(spool)
+        return d if d.parent.exists() else None
+    for cand in (Path("D:/FromGitHubEtc/eve-avatar/spool"),
+                 Path("C:/FromGithubEtc/eve-avatar/spool")):
+        if cand.parent.exists():
+            return cand
+    return None
+
+
+def _page_worker(voice: str) -> None:
+    """Detached child (EVE_AVATAR_MOUTH=page): synth af_heart to a WAV the ORB
+    plays, so the browser's analyser drives the pulse to the real voice — the
+    face finally moves *with* the voice, not on a synthetic timeline. Reads the
+    RAW reply on stdin (stars intact → cues), synth is `--spoken` (stripped →
+    the audio says no stage directions), then tees latest.json with the audioUrl.
+    The orb is the mouth in this mode: local playback is skipped upstream, so no
+    duet. Blocking synth is fine — this whole process is detached."""
+    raw = sys.stdin.read()
+    if not raw.strip():
+        return
+    spool_dir = _avatar_spool_dir()
+    if spool_dir is None:
+        return
+    try:
+        spool_dir.mkdir(parents=True, exist_ok=True)
+        ts = int(time.time())
+        wav = spool_dir / f"utterance-{ts}-{os.getpid()}.wav"
+        # sys.executable IS the venv python (parent launched us with it) → has kokoro.
+        r = subprocess.run(
+            [sys.executable, str(SPEAK), "--spoken", "--voice", voice,
+             "--save", str(wav), "-"],
+            input=raw.encode("utf-8"),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        if r.returncode != 0 or not wav.exists():
+            return  # synth failed — leave the last performance up, don't tee a dead url
+        entry = {
+            "id": f"eve-{ts}-{os.getpid()}",
+            "text": raw,                       # raw → the page extracts cues
+            "audioUrl": f"spool/{wav.name}",   # relative to the served root
+        }
+        tmp = spool_dir / f".latest.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, spool_dir / "latest.json")
+        # Keep the spool from growing forever: retain the newest few utterance wavs.
+        wavs = sorted(spool_dir.glob("utterance-*.wav"), key=lambda p: p.stat().st_mtime)
+        for old in wavs[:-6]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    except Exception:
+        pass  # page-mouth is opt-in; a failure here means one silent reply, logged nowhere
+
+
 def _start_daemon(py: str) -> None:
     """Spawn the daemon detached so the NEXT reply finds it warm. A second
     spawn is harmless — the port bind is the single-instance guard. Its stderr
@@ -193,6 +252,11 @@ def _start_daemon(py: str) -> None:
 
 
 def main() -> None:
+    # Detached page-mouth worker mode (spawned by this same script below).
+    if len(sys.argv) >= 2 and sys.argv[1] == "--page-worker":
+        _page_worker(sys.argv[2] if len(sys.argv) > 2 else "af_heart")
+        return
+
     try:
         hook = json.load(sys.stdin)
     except Exception:
@@ -217,6 +281,29 @@ def main() -> None:
 
     py = os.getenv("CC_SPEAK_PYTHON") or (str(DEFAULT_PY) if DEFAULT_PY.exists() else sys.executable)
     voice = os.getenv("CC_SPEAK_VOICE", "af_heart")
+
+    # Page-mouth mode (EVE_AVATAR_MOUTH=page): the ORB plays the voice, so the
+    # browser analyser can pulse the face to the real audio. Synth happens in a
+    # detached worker (spawned from this same script), which tees the wav+cue
+    # spool when done. We RETURN here — no local Kokoro playback — so the orb is
+    # the sole mouth and there is no duet. Falls back to normal playback only if
+    # no orb is checked out (so page-mouth on a machine without the orb still
+    # talks). Verified end-to-end 2026-07-19.
+    if os.getenv("EVE_AVATAR_MOUTH", "").lower() == "page" and _avatar_spool_dir() is not None:
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        else:
+            kwargs["start_new_session"] = True
+        try:
+            p = subprocess.Popen([py, os.path.abspath(__file__), "--page-worker", voice],
+                                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, **kwargs)
+            p.stdin.write(text.encode("utf-8"))
+            p.stdin.close()
+        except Exception:
+            pass
+        return  # orb is the mouth; do not also play locally
 
     # Fast path: resident warm daemon (speech in ~1s, playback serialized,
     # latest-wins). "warming" = one is already loading its model — fall through
