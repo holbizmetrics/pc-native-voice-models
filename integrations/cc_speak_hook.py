@@ -190,7 +190,10 @@ def _page_worker(voice: str) -> None:
     the audio says no stage directions), then tees latest.json with the audioUrl.
     The orb is the mouth in this mode: local playback is skipped upstream, so no
     duet. Blocking synth is fine — this whole process is detached."""
-    raw = sys.stdin.read()
+    # Read stdin as BYTES and decode utf-8 explicitly: Windows python defaults
+    # sys.stdin to cp1252, which double-encodes the parent's utf-8 payload into
+    # mojibake (emoji/em-dash → ðŸŒ± / â€"). Caught live 2026-07-19 in the caption.
+    raw = sys.stdin.buffer.read().decode("utf-8", "replace")
     if not raw.strip():
         return
     spool_dir = _avatar_spool_dir()
