@@ -193,7 +193,27 @@ def _page_worker(voice: str) -> None:
     # Read stdin as BYTES and decode utf-8 explicitly: Windows python defaults
     # sys.stdin to cp1252, which double-encodes the parent's utf-8 payload into
     # mojibake (emoji/em-dash → ðŸŒ± / â€"). Caught live 2026-07-19 in the caption.
-    raw = sys.stdin.buffer.read().decode("utf-8", "replace")
+    payload = sys.stdin.buffer.read().decode("utf-8", "replace")
+    if not payload.strip():
+        return
+    # Two texts, deliberately: the FULL reply for the face, the CAPPED reply for
+    # the voice. CC_SPEAK_MAXCHARS limits how long Eve SPEAKS; the caption has no
+    # reason to inherit it. It did anyway until 2026-08-08, because the parent
+    # reused one variable — it teed the raw text, then capped that same variable
+    # in place, then piped the capped version here, and this worker's tee
+    # overwrote the good one. The face showed exactly 1200 characters and stopped
+    # mid-sentence ("I can ask; I'm"), which is how Holger spotted it.
+    # Older parents send bare text; treat that as both, so a version skew between
+    # this file and a running parent degrades to the previous behaviour rather
+    # than teeing a JSON blob as the caption.
+    try:
+        parsed = json.loads(payload)
+        if not isinstance(parsed, dict) or "raw" not in parsed:
+            raise ValueError("not a page-worker payload")
+        raw = parsed["raw"]
+        spoken = parsed.get("spoken") or raw
+    except Exception:
+        raw = spoken = payload
     if not raw.strip():
         return
     spool_dir = _avatar_spool_dir()
@@ -207,14 +227,14 @@ def _page_worker(voice: str) -> None:
         r = subprocess.run(
             [sys.executable, str(SPEAK), "--spoken", "--voice", voice,
              "--save", str(wav), "-"],
-            input=raw.encode("utf-8"),
+            input=spoken.encode("utf-8"),   # the VOICE gets the capped text
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         if r.returncode != 0 or not wav.exists():
             return  # synth failed — leave the last performance up, don't tee a dead url
         entry = {
             "id": f"eve-{ts}-{os.getpid()}",
-            "text": raw,                       # raw → the page extracts cues
+            "text": raw,                       # FULL raw reply → caption + cues
             "audioUrl": f"spool/{wav.name}",   # relative to the served root
         }
         tmp = spool_dir / f".latest.{os.getpid()}.tmp"
@@ -275,6 +295,12 @@ def main() -> None:
     # mutates it — the face performs the full caption + all cues. Best-effort.
     _tee_avatar(text)
 
+    # Keep the uncapped reply. The comment above was true of THIS tee and false
+    # of the page-mouth path below, which re-teed the capped `text` and undid it
+    # — the cap leaked into the face because one variable served both purposes.
+    # Named separately now so the two cannot drift back together.
+    full_text = text
+
     try:
         cap = int(os.getenv("CC_SPEAK_MAXCHARS", "1200"))
     except ValueError:
@@ -302,7 +328,11 @@ def main() -> None:
             p = subprocess.Popen([py, os.path.abspath(__file__), "--page-worker", voice],
                                  stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL, **kwargs)
-            p.stdin.write(text.encode("utf-8"))
+            # FULL text for the face, CAPPED text for the voice. A bare string
+            # here is what capped the caption; the worker still accepts one, so
+            # a stale worker alongside a new parent degrades instead of breaking.
+            p.stdin.write(json.dumps({"raw": full_text, "spoken": text},
+                                     ensure_ascii=False).encode("utf-8"))
             p.stdin.close()
         except Exception:
             pass
