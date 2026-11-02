@@ -105,9 +105,57 @@ FIRST_CHUNK_MAX_CHARS = 45
 FIRST_CLAUSE_MIN_CHARS = 8
 
 
+# Longest piece handed to Kokoro in one call. Kokoro's context is 510 phonemes
+# and kokoro_onnx 0.x crashes AT that limit (it truncates to 510, then indexes a
+# 510-row voice table with 510 -> IndexError; found 2026-11-02 on a 2.3M-char
+# story with 1,057 sentences over 300 chars). Phonemes run at roughly one per
+# character for English prose but more for digits/abbreviations, so the cap sits
+# well under 510 — and the operator's real file is measured against the actual
+# phonemizer in test_split_sentences.py's companion check, not assumed.
+PIECE_MAX_CHARS = 250
+
+
+def _pack(parts: list[str], sep: str = " ") -> list[str]:
+    """Greedily join consecutive parts into pieces of at most PIECE_MAX_CHARS."""
+    out, cur = [], ""
+    for part in parts:
+        if cur and len(cur) + len(sep) + len(part) > PIECE_MAX_CHARS:
+            out.append(cur)
+            cur = part
+        else:
+            cur = f"{cur}{sep}{part}" if cur else part
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _split_long(piece: str) -> list[str]:
+    """A sentence over the cap -> pieces under it. Prefers clause boundaries
+    (, ; :) so the pause lands where a reader would pause; falls back to word
+    boundaries; a single "word" longer than the cap (a URL, a run of symbols)
+    is hard-cut, because a mid-word break is better than a crash."""
+    if len(piece) <= PIECE_MAX_CHARS:
+        return [piece]
+    units: list[str] = []
+    for clause in CLAUSE_SPLIT.split(piece):
+        if len(clause) <= PIECE_MAX_CHARS:
+            units.append(clause)
+            continue
+        for word in clause.split():
+            while len(word) > PIECE_MAX_CHARS:
+                units.append(word[:PIECE_MAX_CHARS])
+                word = word[PIECE_MAX_CHARS:]
+            if word:
+                units.append(word)
+    return _pack(units)
+
+
 def split_sentences(text: str) -> list[str]:
     parts = [s.strip() for s in SENTENCE_SPLIT.split(text.strip()) if s.strip()]
-    return parts or ([text.strip()] if text.strip() else [])
+    parts = parts or ([text.strip()] if text.strip() else [])
+    # Every caller (streaming, --save, --record, book2audio) goes through here,
+    # so this one cap protects them all.
+    return [p for s in parts for p in _split_long(s)]
 
 
 def chunk_for_streaming(text: str) -> list[str]:
