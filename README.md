@@ -95,6 +95,32 @@ python speak.py "こんにちは。" --voice jf_alpha             # Japanese, au
 **What works (v1):** clean speech, 54 voices, **9 languages auto-detected from voice** (incl. Mandarin via misaki[zh]), streaming low-latency playback, save-to-WAV, CPU-only.
 **Not in v1:** non-verbal cues (laughs/sighs). Sesame CSM-1B was tested and ruled out — not human-grade laughs + ~14× realtime on CPU (see research thread `SESAME-SPIKE-RESULT`). Natural non-verbal remains an open research question, deferred to v2.
 
+## Clone a voice — speak in your own voice
+
+Kokoro's 54 voices are fixed; it cannot learn a new one. Cloning uses a second engine, **OpenVoice V2** (MIT-licensed), behind the same `speak.py`.
+
+```bash
+# 1. enrol a recording under a name (wav, mp3, flac or ogg; convert m4a first)
+python clone.py register holger my-recording.wav self
+
+# 2. speak with it, exactly like a built-in voice
+python speak.py "This is my own voice." --voice holger
+python speak.py "Saved to a file." --voice holger --save out.wav
+```
+
+- **The recording:** clean speech, no music or background noise. The engine takes one overall tone-colour reading that settles after about 10 seconds, so 10 to 30 seconds is plenty.
+- **`self` or `other`** is the last word of the `register` command and says whose voice it is:
+  - `self`: your own voice. Nothing else is needed.
+  - `other`: anyone else's voice. `speak.py` refuses to use it until `voices/<name>/consent.json` exists and is complete, and the output is always watermarked. The fields are in `consent_template` in `clone.py`.
+  - Left out, the name `me` counts as `self` and **every other name counts as `other`**. For your own voice under any other name, write `self`.
+- **The rule:** clone yourself freely. Cloning anyone else needs their recorded consent. `self` is your own statement, not something the tool can check: it keeps an honest user honest, it is not a security control.
+- **Your voice stays on your machine.** A registered voice lives in `voices/<name>/` (the recording, a small description file and a cached tone-colour file). That folder is ignored by git and never uploaded.
+- `python clone.py` with no arguments runs the consent gate's self-test.
+
+**Setup is separate and not one command yet.** Cloning runs in its own environment (`.venv-openvoice`) with the OpenVoice V2 checkpoints from Hugging Face; `speak.py`'s own environment stays small. What was installed, in which order, and why is written down in [`ROADMAP.md`](ROADMAP.md) under "Make it yours".
+
+**Known limits:** it copies the tone colour of a voice, not its rhythm or expressiveness. Each sentence reloads the models: 20 to 25 seconds per sentence on CPU, as measured in July 2026 (see the roadmap); a stay-loaded mode is planned.
+
 ## book2audio.py — document → chaptered audiobook
 
 Turn a long `.html` / `.txt` / `.md` into a folder of ordered, size-capped mp3s. Loads Kokoro **once** and defaults to **GPU** (this is a load-once batch — the one case where CUDA's cold-start is amortized away). Built on `speak.py`'s text helpers (HTML/Markdown stripping, encoding-robust read).
