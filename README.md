@@ -18,7 +18,7 @@ python speak.py "..." --voice af_bella --speed 1.1
 python speak.py --file story.txt        # speak a text file
 echo "piped text works too" | python speak.py
 python speak.py "save instead of play" --save out.wav
-python speak.py --list-voices          # 54 voices, 8 languages
+python speak.py --list-voices           # 54 voices, 9 languages
 python speak.py -h                      # full help with examples
 ```
 
@@ -75,7 +75,7 @@ Pick a voice — the language **auto-derives from the voice prefix**, no `--lang
 ```bash
 python speak.py "Bonjour le monde." --voice ff_siwis      # French, auto
 python speak.py "Hola, qué tal." --voice ef_dora          # Spanish, auto
-python speak.py "こんにちは。" --voice jf_alpha             # Japanese, auto
+python speak.py "こんにちは。" --voice jf_alpha           # Japanese, auto
 ```
 
 | Language | Voice prefix | auto `--lang` | works in base v1 |
